@@ -60,6 +60,8 @@ class UiState:
   debug_touch_count: int = 0
   debug_mouse_down: bool = False
   debug_pointer_pos: tuple[float, float] = (0.0, 0.0)
+  screen_w: int = FALLBACK_WIDTH
+  screen_h: int = FALLBACK_HEIGHT
 
 
 def run_async(fn) -> None:
@@ -104,6 +106,10 @@ def draw_debug_overlay(state: UiState) -> None:
 
 def network_row_rect(index: int, scroll_offset: float) -> rl.Rectangle:
   return rl.Rectangle(LIST_X, LIST_Y + index * ROW_H - scroll_offset, LIST_W, ROW_H - 8)
+
+
+def password_back_rect(state: UiState) -> rl.Rectangle:
+  return rl.Rectangle(state.screen_w - 220, 40, 180, 70)
 
 
 def max_scroll(state: UiState) -> float:
@@ -187,6 +193,10 @@ def handle_password_input(state: UiState, wifi: WifiManager, params: Params, poi
   if not pointer.just_pressed:
     return
 
+  if rl.check_collision_point_rec(rl.Vector2(pointer.x, pointer.y), password_back_rect(state)):
+    state.screen = Screen.MAIN
+    return
+
   key_w, key_h = 90, 90
   start_x, start_y = 40, 300
   for row_idx, row in enumerate(KEYBOARD_ROWS):
@@ -233,6 +243,10 @@ def draw_main_screen(state: UiState) -> None:
 
 
 def draw_password_screen(state: UiState) -> None:
+  back = password_back_rect(state)
+  rl.draw_rectangle(int(back.x), int(back.y), int(back.width), int(back.height), rl.MAROON)
+  rl.draw_text("< Back", int(back.x) + 25, int(back.y) + 20, 24, rl.WHITE)
+
   rl.draw_text(f"SSID: {state.selected_ssid}", 40, 40, 32, rl.WHITE)
   rl.draw_text(f"Password: {'*' * len(state.password_buffer)}", 40, 100, 28, rl.LIGHTGRAY)
 
@@ -265,9 +279,10 @@ def main() -> None:
   wifi = WifiManager()
   state = UiState()
 
+  rl.set_trace_log_level(rl.LOG_DEBUG)
   rl.init_window(0, 0, "wifi-setup")
-  width = rl.get_screen_width() or FALLBACK_WIDTH
-  height = rl.get_screen_height() or FALLBACK_HEIGHT
+  state.screen_w = rl.get_screen_width() or FALLBACK_WIDTH
+  state.screen_h = rl.get_screen_height() or FALLBACK_HEIGHT
   rl.set_target_fps(15)
 
   refresh_ip(state, params)
@@ -276,6 +291,7 @@ def main() -> None:
   last_network_poll = time.monotonic()
 
   while not rl.window_should_close():
+    rl.poll_input_events()
     now = time.monotonic()
     if now - last_ip_poll > IP_POLL_INTERVAL:
       refresh_ip(state, params)
