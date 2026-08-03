@@ -22,11 +22,25 @@ KEYBOARD_ROWS = [
   "zxcvbnm",
 ]
 
+LIST_X, LIST_Y, LIST_W, LIST_H = 40, 160, 600, 420
+ROW_H = 60
+DRAG_THRESHOLD = 12  # px of vertical movement before a press is treated as a scroll, not a tap
+WHEEL_SCROLL_SPEED = 40
+
 
 class Screen:
   MAIN = 0
   PASSWORD = 1
   STATUS = 2
+
+
+@dataclass
+class Pointer:
+  x: float
+  y: float
+  down: bool
+  just_pressed: bool
+  just_released: bool
 
 
 @dataclass
@@ -38,10 +52,44 @@ class UiState:
   password_buffer: str = ""
   status_message: str = ""
   busy: bool = False
+  scroll_offset: float = 0.0
+  pointer_was_down: bool = False
+  drag_start: tuple[float, float] | None = None
+  drag_start_scroll: float = 0.0
+  dragging: bool = False
 
 
 def run_async(fn) -> None:
   threading.Thread(target=fn, daemon=True).start()
+
+
+def clamp(value: float, lo: float, hi: float) -> float:
+  return max(lo, min(hi, value))
+
+
+def get_pointer(state: UiState) -> Pointer:
+  # Touch and mouse are unified here: some raylib backends deliver touchscreen
+  # taps only as touch events, not synthesized mouse clicks, so both are checked.
+  if rl.get_touch_point_count() > 0:
+    pos = rl.get_touch_position(0)
+    down = True
+  else:
+    pos = rl.get_mouse_position()
+    down = rl.is_mouse_button_down(rl.MOUSE_BUTTON_LEFT)
+
+  just_pressed = down and not state.pointer_was_down
+  just_released = state.pointer_was_down and not down
+  state.pointer_was_down = down
+  return Pointer(x=pos.x, y=pos.y, down=down, just_pressed=just_pressed, just_released=just_released)
+
+
+def network_row_rect(index: int, scroll_offset: float) -> rl.Rectangle:
+  return rl.Rectangle(LIST_X, LIST_Y + index * ROW_H - scroll_offset, LIST_W, ROW_H - 8)
+
+
+def max_scroll(state: UiState) -> float:
+  content_h = len(state.networks) * ROW_H
+  return max(0.0, content_h - LIST_H)
 
 
 def refresh_ip(state: UiState, params: Params) -> None:
@@ -59,6 +107,7 @@ def refresh_networks(state: UiState, wifi: WifiManager) -> None:
   def _do_scan():
     networks = wifi.scan()
     state.networks = networks
+    state.scroll_offset = clamp(state.scroll_offset, 0, max_scroll(state))
     state.busy = False
 
   run_async(_do_scan)
@@ -78,56 +127,90 @@ def start_connect(state: UiState, wifi: WifiManager, params: Params, ssid: str, 
   run_async(_do_connect)
 
 
-def handle_main_input(state: UiState, wifi: WifiManager, params: Params) -> None:
-  if rl.is_mouse_button_pressed(rl.MOUSE_BUTTON_LEFT):
-    mouse = rl.get_mouse_position()
-    row_h = 60
-    start_y = 160
-    for i, net in enumerate(state.networks):
-      row_rect = rl.Rectangle(40, start_y + i * row_h, 600, row_h - 8)
-      if rl.check_collision_point_rec(mouse, row_rect):
-        state.selected_ssid = net.ssid
-        state.password_buffer = ""
-        is_open = net.security in ("", "--")
-        if is_open or net.saved:
-          # nmcli reconnects saved profiles without a password; open networks need none either
-          start_connect(state, wifi, params, net.ssid, None)
-        else:
-          state.screen = Screen.PASSWORD
-        break
+def select_network(state: UiState, wifi: WifiManager, params: Params, net: WifiNetwork) -> None:
+  state.selected_ssid = net.ssid
+  state.password_buffer = ""
+  is_open = net.security in ("", "--")
+  if is_open or net.saved:
+    # nmcli reconnects saved profiles without a password; open networks need none either
+    start_connect(state, wifi, params, net.ssid, None)
+  else:
+    state.screen = Screen.PASSWORD
 
 
-def handle_password_input(state: UiState, wifi: WifiManager, params: Params) -> None:
+def handle_main_input(state: UiState, wifi: WifiManager, params: Params, pointer: Pointer) -> None:
+  wheel = rl.get_mouse_wheel_move()
+  if wheel:
+    state.scroll_offset = clamp(state.scroll_offset - wheel * WHEEL_SCROLL_SPEED, 0, max_scroll(state))
+
+  if pointer.just_pressed:
+    state.drag_start = (pointer.x, pointer.y)
+    state.drag_start_scroll = state.scroll_offset
+    state.dragging = False
+  elif pointer.down and state.drag_start is not None:
+    dy = pointer.y - state.drag_start[1]
+    if abs(dy) > DRAG_THRESHOLD:
+      state.dragging = True
+      state.scroll_offset = clamp(state.drag_start_scroll - dy, 0, max_scroll(state))
+  elif pointer.just_released:
+    if state.drag_start is not None and not state.dragging:
+      if LIST_Y <= pointer.y <= LIST_Y + LIST_H:
+        for i, net in enumerate(state.networks):
+          row_rect = network_row_rect(i, state.scroll_offset)
+          if rl.check_collision_point_rec(rl.Vector2(pointer.x, pointer.y), row_rect):
+            select_network(state, wifi, params, net)
+            break
+    state.drag_start = None
+    state.dragging = False
+
+
+def handle_password_input(state: UiState, wifi: WifiManager, params: Params, pointer: Pointer) -> None:
+  if not pointer.just_pressed:
+    return
+
   key_w, key_h = 90, 90
   start_x, start_y = 40, 300
   for row_idx, row in enumerate(KEYBOARD_ROWS):
     for col_idx, ch in enumerate(row):
       key_rect = rl.Rectangle(start_x + col_idx * key_w, start_y + row_idx * key_h, key_w - 6, key_h - 6)
-      if rl.is_mouse_button_pressed(rl.MOUSE_BUTTON_LEFT) and rl.check_collision_point_rec(rl.get_mouse_position(), key_rect):
+      if rl.check_collision_point_rec(rl.Vector2(pointer.x, pointer.y), key_rect):
         state.password_buffer += ch
+        return
 
   connect_rect = rl.Rectangle(start_x, start_y + len(KEYBOARD_ROWS) * key_h + 20, 300, 80)
-  if rl.is_mouse_button_pressed(rl.MOUSE_BUTTON_LEFT) and rl.check_collision_point_rec(rl.get_mouse_position(), connect_rect):
+  if rl.check_collision_point_rec(rl.Vector2(pointer.x, pointer.y), connect_rect):
     if state.selected_ssid is not None:
       start_connect(state, wifi, params, state.selected_ssid, state.password_buffer)
 
 
+def handle_status_input(state: UiState, pointer: Pointer) -> None:
+  if not state.busy and pointer.just_pressed:
+    state.screen = Screen.MAIN
+
+
 def handle_input(state: UiState, wifi: WifiManager, params: Params) -> None:
+  pointer = get_pointer(state)
   if state.screen == Screen.MAIN:
-    handle_main_input(state, wifi, params)
+    handle_main_input(state, wifi, params, pointer)
   elif state.screen == Screen.PASSWORD:
-    handle_password_input(state, wifi, params)
+    handle_password_input(state, wifi, params, pointer)
+  elif state.screen == Screen.STATUS:
+    handle_status_input(state, pointer)
 
 
 def draw_main_screen(state: UiState) -> None:
   rl.draw_text(f"IP: {state.ip or 'not connected'}", 40, 40, 40, rl.WHITE)
-  rl.draw_text("Networks (tap to connect):", 40, 100, 24, rl.LIGHTGRAY)
-  row_h = 60
-  start_y = 160
+  rl.draw_text("Networks (tap to connect, drag to scroll):", 40, 100, 24, rl.LIGHTGRAY)
+
+  rl.begin_scissor_mode(LIST_X, LIST_Y, LIST_W, LIST_H)
   for i, net in enumerate(state.networks):
+    rect = network_row_rect(i, state.scroll_offset)
+    if rect.y + rect.height < LIST_Y or rect.y > LIST_Y + LIST_H:
+      continue
     label = f"{net.ssid}  ({net.signal}%)  {'saved' if net.saved else net.security}"
-    rl.draw_rectangle(40, start_y + i * row_h, 600, row_h - 8, rl.DARKGRAY)
-    rl.draw_text(label, 50, start_y + i * row_h + 15, 20, rl.WHITE)
+    rl.draw_rectangle(int(rect.x), int(rect.y), int(rect.width), int(rect.height), rl.DARKGRAY)
+    rl.draw_text(label, int(rect.x) + 10, int(rect.y) + 15, 20, rl.WHITE)
+  rl.end_scissor_mode()
 
 
 def draw_password_screen(state: UiState) -> None:
@@ -152,8 +235,6 @@ def draw_status_screen(state: UiState) -> None:
   rl.draw_text(state.status_message, 40, 40, 32, rl.WHITE)
   if not state.busy:
     rl.draw_text("tap anywhere to go back", 40, 100, 20, rl.LIGHTGRAY)
-    if rl.is_mouse_button_pressed(rl.MOUSE_BUTTON_LEFT):
-      state.screen = Screen.MAIN
 
 
 def main() -> None:
