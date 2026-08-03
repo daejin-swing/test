@@ -57,6 +57,9 @@ class UiState:
   drag_start: tuple[float, float] | None = None
   drag_start_scroll: float = 0.0
   dragging: bool = False
+  debug_touch_count: int = 0
+  debug_mouse_down: bool = False
+  debug_pointer_pos: tuple[float, float] = (0.0, 0.0)
 
 
 def run_async(fn) -> None:
@@ -70,17 +73,33 @@ def clamp(value: float, lo: float, hi: float) -> float:
 def get_pointer(state: UiState) -> Pointer:
   # Touch and mouse are unified here: some raylib backends deliver touchscreen
   # taps only as touch events, not synthesized mouse clicks, so both are checked.
-  if rl.get_touch_point_count() > 0:
+  touch_count = rl.get_touch_point_count()
+  mouse_down = rl.is_mouse_button_down(rl.MOUSE_BUTTON_LEFT)
+
+  if touch_count > 0:
     pos = rl.get_touch_position(0)
     down = True
   else:
     pos = rl.get_mouse_position()
-    down = rl.is_mouse_button_down(rl.MOUSE_BUTTON_LEFT)
+    down = mouse_down
+
+  state.debug_touch_count = touch_count
+  state.debug_mouse_down = mouse_down
+  state.debug_pointer_pos = (pos.x, pos.y)
 
   just_pressed = down and not state.pointer_was_down
   just_released = state.pointer_was_down and not down
   state.pointer_was_down = down
   return Pointer(x=pos.x, y=pos.y, down=down, just_pressed=just_pressed, just_released=just_released)
+
+
+def draw_debug_overlay(state: UiState) -> None:
+  text = (
+    f"touch={state.debug_touch_count} "
+    f"mouse_down={state.debug_mouse_down} "
+    f"pos=({state.debug_pointer_pos[0]:.0f},{state.debug_pointer_pos[1]:.0f})"
+  )
+  rl.draw_text(text, 10, rl.get_screen_height() - 30, 20, rl.YELLOW)
 
 
 def network_row_rect(index: int, scroll_offset: float) -> rl.Rectangle:
@@ -275,6 +294,7 @@ def main() -> None:
       draw_password_screen(state)
     elif state.screen == Screen.STATUS:
       draw_status_screen(state)
+    draw_debug_overlay(state)
     rl.end_drawing()
 
   rl.close_window()
