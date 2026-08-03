@@ -25,7 +25,9 @@ function launch {
   # 3. 파이썬 경로 및 라이브러리 링크 (Line 68 ~ 78)
   ln -sfn $(pwd) /data/pythonpath
   export PYTHONPATH="$PWD"
- 
+
+  # 5. 와이파이 설정 UI (크래시 시 재시작)
+  ( while true; do python3 ui/wifi_ui.py; sleep 2; done ) &
 
   # 4. 앱 실행 (Line 86 ~ 90)
   exec python3 updater/ota.py
