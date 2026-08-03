@@ -14,9 +14,9 @@ import datetime
 from functools import lru_cache
 
 
-from .common import BASEDIR
-from .common.params import Params
-from .common.log import cloudlog
+from common import BASEDIR
+from common.params import Params
+from common.log import cloudlog
 
 
 TICI = os.path.isfile('/TICI')
