@@ -42,7 +42,7 @@ class Params:
         with open(self._path(key), "wb") as f:
             f.write(data)
 
-    def put_bool(self, key: str, val: bool):
+    def put_bool(self, key: str, val: bool, **kwargs):
         self.put(key, "1" if val else "0")
 
     def remove(self, key: str):
