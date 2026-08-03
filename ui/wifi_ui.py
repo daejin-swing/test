@@ -13,6 +13,7 @@ from ui.wifi import WifiManager, WifiNetwork
 FALLBACK_WIDTH = 2160
 FALLBACK_HEIGHT = 1080
 IP_POLL_INTERVAL = 5.0
+NETWORK_POLL_INTERVAL = 15.0
 
 KEYBOARD_ROWS = [
   "1234567890",
@@ -172,12 +173,16 @@ def main() -> None:
   refresh_ip(state, params)
   refresh_networks(state, wifi)
   last_ip_poll = time.monotonic()
+  last_network_poll = time.monotonic()
 
   while not rl.window_should_close():
     now = time.monotonic()
     if now - last_ip_poll > IP_POLL_INTERVAL:
       refresh_ip(state, params)
       last_ip_poll = now
+    if now - last_network_poll > NETWORK_POLL_INTERVAL and state.screen == Screen.MAIN:
+      refresh_networks(state, wifi)
+      last_network_poll = now
 
     handle_input(state, wifi, params)
 
