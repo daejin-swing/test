@@ -26,7 +26,10 @@ function launch {
   ln -sfn $(pwd) /data/pythonpath
   export PYTHONPATH="$PWD"
 
-  # 5. 와이파이 설정 UI (크래시 시 재시작)
+  # 5. 카메라 데몬 (크래시 시 재시작)
+  ( while true; do ./camerad/run_camerad.sh; sleep 2; done ) &
+
+  # 6. 와이파이 설정 UI (크래시 시 재시작)
   ( while true; do python3 ui/wifi_ui.py; sleep 2; done ) &
 
   # 4. 앱 실행 (Line 86 ~ 90)

@@ -7,6 +7,7 @@ import pyray as rl
 
 from common.log import cloudlog
 from common.params import Params
+from ui.camera_feed import CameraFeed
 from ui.net_info import get_ip_address
 from ui.wifi import WifiManager, WifiNetwork
 
@@ -32,6 +33,7 @@ class Screen:
   MAIN = 0
   PASSWORD = 1
   STATUS = 2
+  CAMERA = 3
 
 
 @dataclass
@@ -57,11 +59,11 @@ class UiState:
   drag_start: tuple[float, float] | None = None
   drag_start_scroll: float = 0.0
   dragging: bool = False
-  debug_touch_count: int = 0
-  debug_mouse_down: bool = False
-  debug_pointer_pos: tuple[float, float] = (0.0, 0.0)
   screen_w: int = FALLBACK_WIDTH
   screen_h: int = FALLBACK_HEIGHT
+  camera_starting: bool = False
+  camera_texture: object | None = None
+  camera_texture_size: tuple[int, int] | None = None
 
 
 def run_async(fn) -> None:
@@ -75,19 +77,12 @@ def clamp(value: float, lo: float, hi: float) -> float:
 def get_pointer(state: UiState) -> Pointer:
   # Touch and mouse are unified here: some raylib backends deliver touchscreen
   # taps only as touch events, not synthesized mouse clicks, so both are checked.
-  touch_count = rl.get_touch_point_count()
-  mouse_down = rl.is_mouse_button_down(rl.MOUSE_BUTTON_LEFT)
-
-  if touch_count > 0:
+  if rl.get_touch_point_count() > 0:
     pos = rl.get_touch_position(0)
     down = True
   else:
     pos = rl.get_mouse_position()
-    down = mouse_down
-
-  state.debug_touch_count = touch_count
-  state.debug_mouse_down = mouse_down
-  state.debug_pointer_pos = (pos.x, pos.y)
+    down = rl.is_mouse_button_down(rl.MOUSE_BUTTON_LEFT)
 
   just_pressed = down and not state.pointer_was_down
   just_released = state.pointer_was_down and not down
@@ -95,20 +90,13 @@ def get_pointer(state: UiState) -> Pointer:
   return Pointer(x=pos.x, y=pos.y, down=down, just_pressed=just_pressed, just_released=just_released)
 
 
-def draw_debug_overlay(state: UiState) -> None:
-  text = (
-    f"touch={state.debug_touch_count} "
-    f"mouse_down={state.debug_mouse_down} "
-    f"pos=({state.debug_pointer_pos[0]:.0f},{state.debug_pointer_pos[1]:.0f})"
-  )
-  rl.draw_text(text, 10, rl.get_screen_height() - 30, 20, rl.YELLOW)
-
-
 def network_row_rect(index: int, scroll_offset: float) -> rl.Rectangle:
   return rl.Rectangle(LIST_X, LIST_Y + index * ROW_H - scroll_offset, LIST_W, ROW_H - 8)
 
 
-def password_back_rect(state: UiState) -> rl.Rectangle:
+# Both the "QR 접속" button (on Screen.MAIN) and every "< Back" button share this
+# same top-right corner spot, since only one of them is ever on screen at a time.
+def top_right_button_rect(state: UiState) -> rl.Rectangle:
   return rl.Rectangle(state.screen_w - 220, 40, 180, 70)
 
 
@@ -152,6 +140,18 @@ def start_connect(state: UiState, wifi: WifiManager, params: Params, ssid: str, 
   run_async(_do_connect)
 
 
+def start_camera(state: UiState, camera: CameraFeed) -> None:
+  if state.camera_starting or camera.client is not None:
+    return
+  state.camera_starting = True
+
+  def _do_start():
+    camera.start()
+    state.camera_starting = False
+
+  run_async(_do_start)
+
+
 def select_network(state: UiState, wifi: WifiManager, params: Params, net: WifiNetwork) -> None:
   state.selected_ssid = net.ssid
   state.password_buffer = ""
@@ -163,7 +163,13 @@ def select_network(state: UiState, wifi: WifiManager, params: Params, net: WifiN
     state.screen = Screen.PASSWORD
 
 
-def handle_main_input(state: UiState, wifi: WifiManager, params: Params, pointer: Pointer) -> None:
+def handle_main_input(state: UiState, wifi: WifiManager, params: Params, camera: CameraFeed, pointer: Pointer) -> None:
+  if pointer.just_pressed and rl.check_collision_point_rec(rl.Vector2(pointer.x, pointer.y), top_right_button_rect(state)):
+    state.screen = Screen.CAMERA
+    state.drag_start = None
+    start_camera(state, camera)
+    return
+
   wheel = rl.get_mouse_wheel_move()
   if wheel:
     state.scroll_offset = clamp(state.scroll_offset - wheel * WHEEL_SCROLL_SPEED, 0, max_scroll(state))
@@ -193,7 +199,7 @@ def handle_password_input(state: UiState, wifi: WifiManager, params: Params, poi
   if not pointer.just_pressed:
     return
 
-  if rl.check_collision_point_rec(rl.Vector2(pointer.x, pointer.y), password_back_rect(state)):
+  if rl.check_collision_point_rec(rl.Vector2(pointer.x, pointer.y), top_right_button_rect(state)):
     state.screen = Screen.MAIN
     return
 
@@ -217,17 +223,28 @@ def handle_status_input(state: UiState, pointer: Pointer) -> None:
     state.screen = Screen.MAIN
 
 
-def handle_input(state: UiState, wifi: WifiManager, params: Params) -> None:
+def handle_camera_input(state: UiState, pointer: Pointer) -> None:
+  if pointer.just_pressed and rl.check_collision_point_rec(rl.Vector2(pointer.x, pointer.y), top_right_button_rect(state)):
+    state.screen = Screen.MAIN
+
+
+def handle_input(state: UiState, wifi: WifiManager, params: Params, camera: CameraFeed) -> None:
   pointer = get_pointer(state)
   if state.screen == Screen.MAIN:
-    handle_main_input(state, wifi, params, pointer)
+    handle_main_input(state, wifi, params, camera, pointer)
   elif state.screen == Screen.PASSWORD:
     handle_password_input(state, wifi, params, pointer)
   elif state.screen == Screen.STATUS:
     handle_status_input(state, pointer)
+  elif state.screen == Screen.CAMERA:
+    handle_camera_input(state, pointer)
 
 
 def draw_main_screen(state: UiState) -> None:
+  qr = top_right_button_rect(state)
+  rl.draw_rectangle(int(qr.x), int(qr.y), int(qr.width), int(qr.height), rl.DARKBLUE)
+  rl.draw_text("QR 접속", int(qr.x) + 35, int(qr.y) + 20, 24, rl.WHITE)
+
   rl.draw_text(f"IP: {state.ip or 'not connected'}", 40, 40, 40, rl.WHITE)
   rl.draw_text("Networks (tap to connect, drag to scroll):", 40, 100, 24, rl.LIGHTGRAY)
 
@@ -243,7 +260,7 @@ def draw_main_screen(state: UiState) -> None:
 
 
 def draw_password_screen(state: UiState) -> None:
-  back = password_back_rect(state)
+  back = top_right_button_rect(state)
   rl.draw_rectangle(int(back.x), int(back.y), int(back.width), int(back.height), rl.MAROON)
   rl.draw_text("< Back", int(back.x) + 25, int(back.y) + 20, 24, rl.WHITE)
 
@@ -270,6 +287,29 @@ def draw_status_screen(state: UiState) -> None:
     rl.draw_text("tap anywhere to go back", 40, 100, 20, rl.LIGHTGRAY)
 
 
+def draw_camera_screen(state: UiState, camera: CameraFeed) -> None:
+  frame = camera.get_latest_frame()
+  if frame is not None:
+    h, w = frame.shape[0], frame.shape[1]
+    if state.camera_texture is None or state.camera_texture_size != (w, h):
+      if state.camera_texture is not None:
+        rl.unload_texture(state.camera_texture)
+      img = rl.Image(frame, w, h, 1, rl.PIXELFORMAT_UNCOMPRESSED_R8G8B8)
+      state.camera_texture = rl.load_texture_from_image(img)
+      state.camera_texture_size = (w, h)
+    else:
+      rl.update_texture(state.camera_texture, rl.ffi.from_buffer(frame))
+    rl.draw_texture(state.camera_texture, 0, 0, rl.WHITE)
+  elif state.camera_starting:
+    rl.draw_text("starting camera...", 40, 40, 32, rl.LIGHTGRAY)
+  else:
+    rl.draw_text("camera feed not connected yet", 40, 40, 32, rl.LIGHTGRAY)
+
+  back = top_right_button_rect(state)
+  rl.draw_rectangle(int(back.x), int(back.y), int(back.width), int(back.height), rl.MAROON)
+  rl.draw_text("< Back", int(back.x) + 25, int(back.y) + 20, 24, rl.WHITE)
+
+
 def main() -> None:
   params = Params()
   if params.get_bool("DisableUI"):
@@ -277,6 +317,7 @@ def main() -> None:
     sys.exit(0)
 
   wifi = WifiManager()
+  camera = CameraFeed()
   state = UiState()
 
   rl.set_trace_log_level(rl.LOG_DEBUG)
@@ -300,7 +341,7 @@ def main() -> None:
       refresh_networks(state, wifi)
       last_network_poll = now
 
-    handle_input(state, wifi, params)
+    handle_input(state, wifi, params, camera)
 
     rl.begin_drawing()
     rl.clear_background(rl.BLACK)
@@ -310,9 +351,11 @@ def main() -> None:
       draw_password_screen(state)
     elif state.screen == Screen.STATUS:
       draw_status_screen(state)
-    draw_debug_overlay(state)
+    elif state.screen == Screen.CAMERA:
+      draw_camera_screen(state, camera)
     rl.end_drawing()
 
+  camera.stop()
   rl.close_window()
 
 
