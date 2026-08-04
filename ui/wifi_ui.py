@@ -302,7 +302,11 @@ def draw_camera_screen(state: UiState, camera: CameraFeed) -> None:
       state.camera_texture = rl.load_texture_from_image(img)
       state.camera_texture_size = (w, h)
     else:
-      rl.update_texture(state.camera_texture, rl.ffi.from_buffer(frame))
+      # rl.ffi.from_buffer() returns a __CDataFromBuf cdata that pyray's generic
+      # wrapper doesn't recognize as cdata for void* params; cast it to a plain
+      # pointer first so it's passed through as-is.
+      pixels_ptr = rl.ffi.cast("void *", rl.ffi.from_buffer(frame))
+      rl.update_texture(state.camera_texture, pixels_ptr)
     rl.draw_texture(state.camera_texture, 0, 0, rl.WHITE)
   elif state.camera_starting:
     rl.draw_text("starting camera...", 40, 40, 32, rl.LIGHTGRAY)
