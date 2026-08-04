@@ -146,8 +146,12 @@ def start_camera(state: UiState, camera: CameraFeed) -> None:
   state.camera_starting = True
 
   def _do_start():
-    camera.start()
-    state.camera_starting = False
+    try:
+      camera.start()
+    except Exception:
+      cloudlog.exception("camera_feed: start() raised")
+    finally:
+      state.camera_starting = False
 
   run_async(_do_start)
 
