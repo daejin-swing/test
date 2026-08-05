@@ -1,3 +1,4 @@
+import re
 import subprocess
 from dataclasses import dataclass
 
@@ -109,10 +110,37 @@ class WifiManager:
     return names
 
 
+def parse_wifi_qr(data: str) -> tuple[str, str | None] | None:
+  """Parse the standard WIFI:S:<ssid>;T:<WPA|WEP|nopass>;P:<password>;H:<bool>;;
+  string phones generate for "share network" QR codes. Returns (ssid, password)
+  or None if `data` isn't a recognizable WiFi QR code."""
+  if not data.startswith("WIFI:"):
+    return None
+
+  body = data[len("WIFI:"):]
+  fields: dict[str, str] = {}
+  for part in re.split(r'(?<!\\);', body):
+    if not part:
+      continue
+    m = re.match(r'^([A-Za-z]):(.*)$', part, re.S)
+    if not m:
+      continue
+    key, value = m.group(1).upper(), m.group(2)
+    fields[key] = re.sub(r'\\(.)', r'\1', value)  # unescape \; \, \: \\
+
+  ssid = fields.get("S")
+  if not ssid:
+    return None
+  security = fields.get("T", "").upper()
+  password = fields.get("P") or None
+  if security in ("", "NOPASS"):
+    password = None
+  return ssid, password
+
+
 def try_connect_from_qr(qr_data: str, wifi: WifiManager) -> tuple[bool, str]:
-  """TODO (future): parse a WIFI:S:<ssid>;T:<WPA|WEP|nopass>;P:<password>;; string
-  decoded from the driver-facing camera feed (camera capture doesn't exist in this
-  repo yet, and is out of scope for now) and call wifi.connect(ssid, password) --
-  the SAME method the manual UI flow uses, so there is only ever one code path
-  that talks to NetworkManager."""
-  raise NotImplementedError
+  parsed = parse_wifi_qr(qr_data)
+  if parsed is None:
+    return False, "not a WiFi QR code"
+  ssid, password = parsed
+  return wifi.connect(ssid, password)

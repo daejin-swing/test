@@ -1,0 +1,31 @@
+name: Bump version
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  bump-version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bump patch version
+        run: |
+          current=$(cat version)
+          numeric=$(echo "$current" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+')
+          suffix=${current#"$numeric"}
+          major=$(echo "$numeric" | cut -d. -f1)
+          minor=$(echo "$numeric" | cut -d. -f2)
+          patch=$(echo "$numeric" | cut -d. -f3)
+          echo "${major}.${minor}.$((patch + 1))${suffix}" > version
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add version
+          git commit -m "chore: bump version"
+          git push

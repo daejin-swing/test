@@ -1,6 +1,7 @@
 import sys
 import threading
 import time
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -46,10 +47,27 @@ def extract_image(buf) -> np.ndarray:
   return np.ascontiguousarray(yuv_to_rgb(y, u, v))
 
 
+@dataclass
+class QrDetection:
+  data: str
+  points: list[tuple[float, float]]  # polygon corners, in frame pixel coordinates
+
+
+def detect_qr(frame: np.ndarray) -> QrDetection | None:
+  import cv2  # lazy: keeps this module importable/testable without opencv installed
+
+  data, points, _ = cv2.QRCodeDetector().detectAndDecode(frame)
+  if not data or points is None:
+    return None
+  return QrDetection(data=data, points=[(float(x), float(y)) for x, y in points.reshape(-1, 2)])
+
+
 class CameraFeed:
   def __init__(self):
     self.client = None  # msgq.visionipc.VisionIpcClient once connected
     self.latest_frame: np.ndarray | None = None
+    self.latest_qr: QrDetection | None = None
+    self._scan_enabled = True
     self._thread: threading.Thread | None = None
     self._running = False
 
@@ -99,9 +117,23 @@ class CameraFeed:
         self.latest_frame = extract_image(buf)
       except Exception:
         cloudlog.exception("camera_feed: failed to decode frame")
+        continue
+
+      if not self._scan_enabled:
+        self.latest_qr = None
+        continue
+      try:
+        self.latest_qr = detect_qr(self.latest_frame)
+      except Exception:
+        cloudlog.exception("camera_feed: failed to run QR detection")
 
   def get_latest_frame(self) -> np.ndarray | None:
     return self.latest_frame
+
+  def set_scan_enabled(self, enabled: bool) -> None:
+    self._scan_enabled = enabled
+    if not enabled:
+      self.latest_qr = None
 
   def stop(self) -> None:
     self._running = False

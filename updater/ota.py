@@ -191,6 +191,20 @@ def init_overlay() -> None:
   cloudlog.info(f"git diff output:\n{git_diff}")
 
 
+def sync_venv(finalized_dir: str) -> None:
+  """Bring finalized_dir/.venv in sync with finalized_dir/ui/requirements.txt.
+  Runs before the update is marked consistent, so this happens in the
+  background well ahead of the next restart/swap -- by the time BASEDIR
+  actually gets replaced, the venv it ships with is already up to date and
+  the swap itself needs no network access. `uv`'s package cache means
+  unchanged dependencies are relinked instead of re-downloaded."""
+  venv_dir = os.path.join(finalized_dir, ".venv")
+  requirements_file = os.path.join(finalized_dir, "ui", "requirements.txt")
+  if not os.path.isdir(venv_dir):
+    run(["uv", "venv", venv_dir])
+  run(["uv", "pip", "install", "--python", os.path.join(venv_dir, "bin", "python3"), "-r", requirements_file])
+
+
 def finalize_update() -> None:
   """Take the current OverlayFS merged view and finalize a copy outside of
   OverlayFS, ready to be swapped-in at BASEDIR. Copy using shutil.copytree"""
@@ -215,6 +229,9 @@ def finalize_update() -> None:
     cloudlog.event("Done git cleanup", duration=time.monotonic() - t)
   except subprocess.CalledProcessError:
     cloudlog.exception(f"Failed git cleanup, took {time.monotonic() - t:.3f} s")
+
+  cloudlog.info("syncing venv for finalized update")
+  sync_venv(FINALIZED)
 
   set_consistent_flag(True)
   cloudlog.info("done finalizing overlay")

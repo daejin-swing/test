@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from ui.net_info import _ip_via_udp_connect
-from ui.wifi import WifiManager
+from ui.wifi import WifiManager, parse_wifi_qr
 
 
 class TestWifiParsing(unittest.TestCase):
@@ -38,6 +38,34 @@ class TestWifiParsing(unittest.TestCase):
     )
     saved = self.wifi._parse_saved_output(raw)
     self.assertEqual(saved, ["MyHomeWifi", "OfficeWifi"])
+
+
+class TestParseWifiQr(unittest.TestCase):
+  def test_wpa_network(self):
+    result = parse_wifi_qr("WIFI:S:MyHomeWifi;T:WPA;P:hunter2;;")
+    self.assertEqual(result, ("MyHomeWifi", "hunter2"))
+
+  def test_open_network(self):
+    result = parse_wifi_qr("WIFI:S:OpenCafe;T:nopass;;")
+    self.assertEqual(result, ("OpenCafe", None))
+
+  def test_missing_type_treated_as_open(self):
+    result = parse_wifi_qr("WIFI:S:OpenCafe;;")
+    self.assertEqual(result, ("OpenCafe", None))
+
+  def test_escaped_characters(self):
+    result = parse_wifi_qr("WIFI:S:My\\;Home\\:Wifi;T:WPA;P:pass\\\\word;;")
+    self.assertEqual(result, ("My;Home:Wifi", "pass\\word"))
+
+  def test_fields_in_any_order(self):
+    result = parse_wifi_qr("WIFI:P:hunter2;T:WPA;S:MyHomeWifi;;")
+    self.assertEqual(result, ("MyHomeWifi", "hunter2"))
+
+  def test_not_a_wifi_qr(self):
+    self.assertIsNone(parse_wifi_qr("https://example.com"))
+
+  def test_missing_ssid(self):
+    self.assertIsNone(parse_wifi_qr("WIFI:T:WPA;P:hunter2;;"))
 
 
 class TestNetInfo(unittest.TestCase):

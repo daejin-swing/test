@@ -9,7 +9,7 @@ from common.log import cloudlog
 from common.params import Params
 from ui.camera_feed import CameraFeed
 from ui.net_info import get_ip_address
-from ui.wifi import WifiManager, WifiNetwork
+from ui.wifi import WifiManager, WifiNetwork, try_connect_from_qr
 
 FALLBACK_WIDTH = 2160
 FALLBACK_HEIGHT = 1080
@@ -34,6 +34,15 @@ class Screen:
   PASSWORD = 1
   STATUS = 2
   CAMERA = 3
+
+
+class QrMode:
+  SCANNING = "scanning"
+  PROCESSING = "processing"
+  INVALID = "invalid"
+
+
+QR_INVALID_DISPLAY_S = 2.0
 
 
 @dataclass
@@ -64,6 +73,11 @@ class UiState:
   camera_starting: bool = False
   camera_texture: object | None = None
   camera_texture_size: tuple[int, int] | None = None
+  qr_mode: str = QrMode.SCANNING
+  qr_frozen_frame: object | None = None
+  qr_bbox: list[tuple[float, float]] | None = None
+  qr_invalid_until: float = 0.0
+  qr_connecting: bool = False
 
 
 def run_async(fn) -> None:
@@ -156,6 +170,41 @@ def start_camera(state: UiState, camera: CameraFeed) -> None:
   run_async(_do_start)
 
 
+def reset_qr_scan(state: UiState, camera: CameraFeed) -> None:
+  state.qr_mode = QrMode.SCANNING
+  state.qr_frozen_frame = None
+  state.qr_bbox = None
+  camera.set_scan_enabled(True)
+
+
+def start_qr_connect(state: UiState, wifi: WifiManager, params: Params, camera: CameraFeed, qr_data: str) -> None:
+  state.qr_connecting = True
+
+  def _do_connect():
+    try:
+      ok, msg = try_connect_from_qr(qr_data, wifi)
+    except Exception:
+      cloudlog.exception("wifi_ui: try_connect_from_qr raised")
+      ok, msg = False, "internal error"
+
+    state.qr_connecting = False
+    if ok:
+      params.put_bool("WifiConnected", True, block=True)
+      refresh_ip(state, params)
+      # Only steal navigation if the user is still on the camera screen --
+      # they may have already backed out while this connect attempt ran.
+      if state.screen == Screen.CAMERA:
+        reset_qr_scan(state, camera)
+        state.screen = Screen.MAIN
+    else:
+      cloudlog.info(f"wifi_ui: QR connect failed: {msg}")
+      if state.screen == Screen.CAMERA:
+        state.qr_mode = QrMode.INVALID
+        state.qr_invalid_until = time.monotonic() + QR_INVALID_DISPLAY_S
+
+  run_async(_do_connect)
+
+
 def select_network(state: UiState, wifi: WifiManager, params: Params, net: WifiNetwork) -> None:
   state.selected_ssid = net.ssid
   state.password_buffer = ""
@@ -171,6 +220,7 @@ def handle_main_input(state: UiState, wifi: WifiManager, params: Params, camera:
   if pointer.just_pressed and rl.check_collision_point_rec(rl.Vector2(pointer.x, pointer.y), top_right_button_rect(state)):
     state.screen = Screen.CAMERA
     state.drag_start = None
+    reset_qr_scan(state, camera)
     start_camera(state, camera)
     return
 
@@ -227,9 +277,24 @@ def handle_status_input(state: UiState, pointer: Pointer) -> None:
     state.screen = Screen.MAIN
 
 
-def handle_camera_input(state: UiState, pointer: Pointer) -> None:
+def handle_camera_input(state: UiState, camera: CameraFeed, pointer: Pointer) -> None:
   if pointer.just_pressed and rl.check_collision_point_rec(rl.Vector2(pointer.x, pointer.y), top_right_button_rect(state)):
+    camera.set_scan_enabled(False)
     state.screen = Screen.MAIN
+
+
+def update_camera_screen(state: UiState, wifi: WifiManager, params: Params, camera: CameraFeed) -> None:
+  if state.qr_mode == QrMode.SCANNING:
+    qr = camera.latest_qr
+    if qr is not None and not state.qr_connecting:
+      state.qr_frozen_frame = camera.get_latest_frame()
+      state.qr_bbox = qr.points
+      state.qr_mode = QrMode.PROCESSING
+      camera.set_scan_enabled(False)
+      start_qr_connect(state, wifi, params, camera, qr.data)
+  elif state.qr_mode == QrMode.INVALID:
+    if time.monotonic() >= state.qr_invalid_until:
+      reset_qr_scan(state, camera)
 
 
 def handle_input(state: UiState, wifi: WifiManager, params: Params, camera: CameraFeed) -> None:
@@ -241,7 +306,8 @@ def handle_input(state: UiState, wifi: WifiManager, params: Params, camera: Came
   elif state.screen == Screen.STATUS:
     handle_status_input(state, pointer)
   elif state.screen == Screen.CAMERA:
-    handle_camera_input(state, pointer)
+    handle_camera_input(state, camera, pointer)
+    update_camera_screen(state, wifi, params, camera)
 
 
 def draw_main_screen(state: UiState) -> None:
@@ -292,7 +358,25 @@ def draw_status_screen(state: UiState) -> None:
 
 
 def draw_camera_screen(state: UiState, camera: CameraFeed) -> None:
-  frame = camera.get_latest_frame()
+  if state.qr_mode == QrMode.INVALID:
+    text = "INVALID CODE"
+    font_size = 60
+    text_w = rl.measure_text(text, font_size)
+    rl.draw_text(text, int((state.screen_w - text_w) / 2), int(state.screen_h / 2 - font_size / 2), font_size, rl.RED)
+    back = top_right_button_rect(state)
+    rl.draw_rectangle(int(back.x), int(back.y), int(back.width), int(back.height), rl.MAROON)
+    rl.draw_text("< Back", int(back.x) + 25, int(back.y) + 20, 24, rl.WHITE)
+    return
+
+  # While processing a detected QR, freeze on the exact frame it was found in
+  # (and its bounding box) instead of continuing to show the live, scanning feed.
+  if state.qr_mode == QrMode.PROCESSING:
+    frame = state.qr_frozen_frame
+    bbox = state.qr_bbox
+  else:
+    frame = camera.get_latest_frame()
+    bbox = camera.latest_qr.points if camera.latest_qr is not None else None
+
   if frame is not None:
     h, w = frame.shape[0], frame.shape[1]
     if state.camera_texture is None or state.camera_texture_size != (w, h):
@@ -317,6 +401,18 @@ def draw_camera_screen(state: UiState, camera: CameraFeed) -> None:
     src_rec = rl.Rectangle(0, 0, tex.width, tex.height)
     dest_rec = rl.Rectangle(dest_x, dest_y, dest_w, dest_h)
     rl.draw_texture_pro(tex, src_rec, dest_rec, rl.Vector2(0, 0), 0, rl.WHITE)
+
+    if bbox:
+      # bbox points are in frame pixel coordinates; map them into the same
+      # scaled/letterboxed space the video itself was just drawn into.
+      pts = [(dest_x + px * scale, dest_y + py * scale) for px, py in bbox]
+      for i in range(len(pts)):
+        x1, y1 = pts[i]
+        x2, y2 = pts[(i + 1) % len(pts)]
+        rl.draw_line_ex(rl.Vector2(x1, y1), rl.Vector2(x2, y2), 4, rl.GREEN)
+
+    if state.qr_mode == QrMode.PROCESSING:
+      rl.draw_text("connecting...", 40, 40, 32, rl.WHITE)
   elif state.camera_starting:
     rl.draw_text("starting camera...", 40, 40, 32, rl.LIGHTGRAY)
   else:
