@@ -83,11 +83,22 @@ class CameraFeed:
   def _poll_loop(self) -> None:
     while self._running:
       buf = self.client.recv(timeout_ms=200)
-      if buf is not None:
-        try:
-          self.latest_frame = extract_image(buf)
-        except Exception:
-          cloudlog.exception("camera_feed: failed to decode frame")
+      if buf is None:
+        continue
+
+      # Decoding is slower than the frame rate, so more than one frame can pile
+      # up in the queue between recv() calls -- drain to whatever is newest
+      # right now instead of decoding (and displaying) a stale backlog frame.
+      while True:
+        newer = self.client.recv(timeout_ms=0)
+        if newer is None:
+          break
+        buf = newer
+
+      try:
+        self.latest_frame = extract_image(buf)
+      except Exception:
+        cloudlog.exception("camera_feed: failed to decode frame")
 
   def get_latest_frame(self) -> np.ndarray | None:
     return self.latest_frame
