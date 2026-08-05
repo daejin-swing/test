@@ -307,7 +307,16 @@ def draw_camera_screen(state: UiState, camera: CameraFeed) -> None:
       # pointer first so it's passed through as-is.
       pixels_ptr = rl.ffi.cast("void *", rl.ffi.from_buffer(frame))
       rl.update_texture(state.camera_texture, pixels_ptr)
-    rl.draw_texture(state.camera_texture, 0, 0, rl.WHITE)
+    # draw_texture() is 1:1 pixel scale from the top-left, so a camera frame
+    # larger than the screen would only show its top-left corner -- scale the
+    # whole frame to fit the screen instead, preserving aspect ratio (letterboxed).
+    tex = state.camera_texture
+    scale = min(state.screen_w / tex.width, state.screen_h / tex.height)
+    dest_w, dest_h = tex.width * scale, tex.height * scale
+    dest_x, dest_y = (state.screen_w - dest_w) / 2, (state.screen_h - dest_h) / 2
+    src_rec = rl.Rectangle(0, 0, tex.width, tex.height)
+    dest_rec = rl.Rectangle(dest_x, dest_y, dest_w, dest_h)
+    rl.draw_texture_pro(tex, src_rec, dest_rec, rl.Vector2(0, 0), 0, rl.WHITE)
   elif state.camera_starting:
     rl.draw_text("starting camera...", 40, 40, 32, rl.LIGHTGRAY)
   else:
