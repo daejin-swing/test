@@ -127,11 +127,6 @@ def handle_button(state: UiState, pointer: Pointer, button_id: str, rect: rl.Rec
   return False
 
 
-def pressed_color(color: rl.Color) -> rl.Color:
-  brighten = lambda c: min(255, c + 60)
-  return rl.Color(brighten(color.r), brighten(color.g), brighten(color.b), color.a)
-
-
 # Every "< Back" button (shown one at a time, on Screen.CAMERA) uses this same
 # top-right corner spot.
 def top_right_button_rect(state: UiState) -> rl.Rectangle:
@@ -284,23 +279,22 @@ def handle_input(state: UiState, wifi: WifiManager, params: Params, camera: Came
 
 def draw_main_screen(state: UiState) -> None:
   update_btn = update_button_rect(state)
-  label, color = {
-    UpdateButtonState.CHECK: ("Check Update", rl.DARKBLUE),
-    UpdateButtonState.FETCH: ("Update", rl.DARKBLUE),
-    UpdateButtonState.REBOOT: ("Reboot", rl.MAROON),
+  label, base_color, pressed_color = {
+    UpdateButtonState.CHECK: ("Check Update", rl.DARKBLUE, rl.SKYBLUE),
+    UpdateButtonState.FETCH: ("Update", rl.DARKBLUE, rl.SKYBLUE),
+    UpdateButtonState.REBOOT: ("Reboot", rl.MAROON, rl.RED),
   }[state.update_button_state]
-  if state.pressed_button == "update":
-    color = pressed_color(color)
+  color = pressed_color if state.pressed_button == "update" else base_color
   rl.draw_rectangle(int(update_btn.x), int(update_btn.y), int(update_btn.width), int(update_btn.height), color)
   rl.draw_text(label, int(update_btn.x) + 15, int(update_btn.y) + 20, 22, rl.WHITE)
 
   wifi_btn = qr_button_rect(state, 0)
-  wifi_color = pressed_color(rl.DARKBLUE) if state.pressed_button == "wifi_qr" else rl.DARKBLUE
+  wifi_color = rl.SKYBLUE if state.pressed_button == "wifi_qr" else rl.DARKBLUE
   rl.draw_rectangle(int(wifi_btn.x), int(wifi_btn.y), int(wifi_btn.width), int(wifi_btn.height), wifi_color)
   rl.draw_text("Scan WiFi QR", int(wifi_btn.x) + 15, int(wifi_btn.y) + 20, 22, rl.WHITE)
 
   ssh_btn = qr_button_rect(state, 1)
-  ssh_color = pressed_color(rl.DARKBLUE) if state.pressed_button == "ssh_key" else rl.DARKBLUE
+  ssh_color = rl.SKYBLUE if state.pressed_button == "ssh_key" else rl.DARKBLUE
   rl.draw_rectangle(int(ssh_btn.x), int(ssh_btn.y), int(ssh_btn.width), int(ssh_btn.height), ssh_color)
   rl.draw_text("Add SSH Key", int(ssh_btn.x) + 15, int(ssh_btn.y) + 20, 22, rl.WHITE)
 
@@ -318,7 +312,7 @@ def draw_camera_screen(state: UiState, camera: CameraFeed) -> None:
     text_w = rl.measure_text(text, font_size)
     rl.draw_text(text, int((state.screen_w - text_w) / 2), int(state.screen_h / 2 - font_size / 2), font_size, rl.RED)
     back = top_right_button_rect(state)
-    back_color = pressed_color(rl.MAROON) if state.pressed_button == "camera_back" else rl.MAROON
+    back_color = rl.RED if state.pressed_button == "camera_back" else rl.MAROON
     rl.draw_rectangle(int(back.x), int(back.y), int(back.width), int(back.height), back_color)
     rl.draw_text("< Back", int(back.x) + 25, int(back.y) + 20, 24, rl.WHITE)
     return
@@ -374,7 +368,7 @@ def draw_camera_screen(state: UiState, camera: CameraFeed) -> None:
     rl.draw_text("camera feed not connected yet", 40, 40, 32, rl.LIGHTGRAY)
 
   back = top_right_button_rect(state)
-  back_color = pressed_color(rl.MAROON) if state.pressed_button == "camera_back" else rl.MAROON
+  back_color = rl.RED if state.pressed_button == "camera_back" else rl.MAROON
   rl.draw_rectangle(int(back.x), int(back.y), int(back.width), int(back.height), back_color)
   rl.draw_text("< Back", int(back.x) + 25, int(back.y) + 20, 24, rl.WHITE)
 
