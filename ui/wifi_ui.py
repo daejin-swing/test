@@ -59,6 +59,7 @@ class UiState:
   connected_ssid: str | None = None
   wifi_status_busy: bool = False
   update_button_state: str = UpdateButtonState.CHECK
+  pressed_button: str | None = None
   pointer_was_down: bool = False
   screen_w: int = FALLBACK_WIDTH
   screen_h: int = FALLBACK_HEIGHT
@@ -91,6 +92,31 @@ def get_pointer(state: UiState) -> Pointer:
   just_released = state.pointer_was_down and not down
   state.pointer_was_down = down
   return Pointer(x=pos.x, y=pos.y, down=down, just_pressed=just_pressed, just_released=just_released)
+
+
+# Standard press-then-release-inside-rect tap: fires (returns True) only on the
+# frame the finger lifts back off the same button it went down on. Dragging off
+# the button before releasing cancels it (clears pressed_button, no fire). Must
+# be called every frame (not just on press/release) so the drag-off cancellation
+# and the visual "currently pressed" state (state.pressed_button) stay accurate.
+def handle_button(state: UiState, pointer: Pointer, button_id: str, rect: rl.Rectangle) -> bool:
+  inside = rl.check_collision_point_rec(rl.Vector2(pointer.x, pointer.y), rect)
+  if pointer.just_pressed:
+    if inside:
+      state.pressed_button = button_id
+    return False
+  if state.pressed_button == button_id:
+    if pointer.just_released:
+      state.pressed_button = None
+      return inside
+    if not pointer.down or not inside:
+      state.pressed_button = None
+  return False
+
+
+def pressed_color(color: rl.Color) -> rl.Color:
+  brighten = lambda c: min(255, c + 60)
+  return rl.Color(brighten(color.r), brighten(color.g), brighten(color.b), color.a)
 
 
 # Every "< Back" button (shown one at a time, on Screen.CAMERA) uses this same
@@ -200,28 +226,22 @@ def start_qr_action(state: UiState, wifi: WifiManager, params: Params, camera: C
 
 
 def handle_main_input(state: UiState, wifi: WifiManager, params: Params, camera: CameraFeed, pointer: Pointer) -> None:
-  if not pointer.just_pressed:
-    return
-  pos = rl.Vector2(pointer.x, pointer.y)
-
-  if rl.check_collision_point_rec(pos, update_button_rect(state)):
+  if handle_button(state, pointer, "update", update_button_rect(state)):
     trigger_update_action(state, params)
-    return
-
-  if rl.check_collision_point_rec(pos, qr_button_rect(state, 0)):
+  elif handle_button(state, pointer, "wifi_qr", qr_button_rect(state, 0)):
     state.qr_purpose = QrPurpose.WIFI
-  elif rl.check_collision_point_rec(pos, qr_button_rect(state, 1)):
+    state.screen = Screen.CAMERA
+    reset_qr_scan(state, camera)
+    start_camera(state, camera)
+  elif handle_button(state, pointer, "ssh_key", qr_button_rect(state, 1)):
     state.qr_purpose = QrPurpose.SSH
-  else:
-    return
-
-  state.screen = Screen.CAMERA
-  reset_qr_scan(state, camera)
-  start_camera(state, camera)
+    state.screen = Screen.CAMERA
+    reset_qr_scan(state, camera)
+    start_camera(state, camera)
 
 
 def handle_camera_input(state: UiState, camera: CameraFeed, pointer: Pointer) -> None:
-  if pointer.just_pressed and rl.check_collision_point_rec(rl.Vector2(pointer.x, pointer.y), top_right_button_rect(state)):
+  if handle_button(state, pointer, "camera_back", top_right_button_rect(state)):
     camera.set_scan_enabled(False)
     state.screen = Screen.MAIN
 
@@ -256,15 +276,19 @@ def draw_main_screen(state: UiState) -> None:
     UpdateButtonState.FETCH: ("Update", rl.DARKBLUE),
     UpdateButtonState.REBOOT: ("Reboot", rl.MAROON),
   }[state.update_button_state]
+  if state.pressed_button == "update":
+    color = pressed_color(color)
   rl.draw_rectangle(int(update_btn.x), int(update_btn.y), int(update_btn.width), int(update_btn.height), color)
   rl.draw_text(label, int(update_btn.x) + 15, int(update_btn.y) + 20, 22, rl.WHITE)
 
   wifi_btn = qr_button_rect(state, 0)
-  rl.draw_rectangle(int(wifi_btn.x), int(wifi_btn.y), int(wifi_btn.width), int(wifi_btn.height), rl.DARKBLUE)
+  wifi_color = pressed_color(rl.DARKBLUE) if state.pressed_button == "wifi_qr" else rl.DARKBLUE
+  rl.draw_rectangle(int(wifi_btn.x), int(wifi_btn.y), int(wifi_btn.width), int(wifi_btn.height), wifi_color)
   rl.draw_text("Scan WiFi QR", int(wifi_btn.x) + 15, int(wifi_btn.y) + 20, 22, rl.WHITE)
 
   ssh_btn = qr_button_rect(state, 1)
-  rl.draw_rectangle(int(ssh_btn.x), int(ssh_btn.y), int(ssh_btn.width), int(ssh_btn.height), rl.DARKBLUE)
+  ssh_color = pressed_color(rl.DARKBLUE) if state.pressed_button == "ssh_key" else rl.DARKBLUE
+  rl.draw_rectangle(int(ssh_btn.x), int(ssh_btn.y), int(ssh_btn.width), int(ssh_btn.height), ssh_color)
   rl.draw_text("Add SSH Key", int(ssh_btn.x) + 15, int(ssh_btn.y) + 20, 22, rl.WHITE)
 
   rl.draw_text(f"IP: {state.ip or 'not connected'}", 40, 40, 40, rl.WHITE)
@@ -279,7 +303,8 @@ def draw_camera_screen(state: UiState, camera: CameraFeed) -> None:
     text_w = rl.measure_text(text, font_size)
     rl.draw_text(text, int((state.screen_w - text_w) / 2), int(state.screen_h / 2 - font_size / 2), font_size, rl.RED)
     back = top_right_button_rect(state)
-    rl.draw_rectangle(int(back.x), int(back.y), int(back.width), int(back.height), rl.MAROON)
+    back_color = pressed_color(rl.MAROON) if state.pressed_button == "camera_back" else rl.MAROON
+    rl.draw_rectangle(int(back.x), int(back.y), int(back.width), int(back.height), back_color)
     rl.draw_text("< Back", int(back.x) + 25, int(back.y) + 20, 24, rl.WHITE)
     return
 
@@ -334,7 +359,8 @@ def draw_camera_screen(state: UiState, camera: CameraFeed) -> None:
     rl.draw_text("camera feed not connected yet", 40, 40, 32, rl.LIGHTGRAY)
 
   back = top_right_button_rect(state)
-  rl.draw_rectangle(int(back.x), int(back.y), int(back.width), int(back.height), rl.MAROON)
+  back_color = pressed_color(rl.MAROON) if state.pressed_button == "camera_back" else rl.MAROON
+  rl.draw_rectangle(int(back.x), int(back.y), int(back.width), int(back.height), back_color)
   rl.draw_text("< Back", int(back.x) + 25, int(back.y) + 20, 24, rl.WHITE)
 
 
