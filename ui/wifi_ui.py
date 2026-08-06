@@ -1,3 +1,4 @@
+import subprocess
 import sys
 import threading
 import time
@@ -27,6 +28,12 @@ class QrPurpose:
   SSH = "ssh"
 
 
+class UpdateButtonState:
+  CHECK = "check"
+  FETCH = "fetch"
+  REBOOT = "reboot"
+
+
 class QrMode:
   SCANNING = "scanning"
   PROCESSING = "processing"
@@ -51,6 +58,7 @@ class UiState:
   ip: str | None = None
   connected_ssid: str | None = None
   wifi_status_busy: bool = False
+  update_button_state: str = UpdateButtonState.CHECK
   pointer_was_down: bool = False
   screen_w: int = FALLBACK_WIDTH
   screen_h: int = FALLBACK_HEIGHT
@@ -94,6 +102,29 @@ def top_right_button_rect(state: UiState) -> rl.Rectangle:
 # Screen.MAIN's two QR buttons stack in that same top-right corner.
 def qr_button_rect(state: UiState, index: int) -> rl.Rectangle:
   return rl.Rectangle(state.screen_w - 260, 40 + index * 90, 220, 70)
+
+
+# Sits immediately left of the SSH button, same row.
+def update_button_rect(state: UiState) -> rl.Rectangle:
+  ssh = qr_button_rect(state, 1)
+  return rl.Rectangle(ssh.x - 240, ssh.y, 220, 70)
+
+
+def refresh_update_button_state(state: UiState, params: Params) -> None:
+  if params.get_bool("UpdateAvailable"):
+    state.update_button_state = UpdateButtonState.REBOOT
+  elif params.get_bool("UpdaterFetchAvailable"):
+    state.update_button_state = UpdateButtonState.FETCH
+  else:
+    state.update_button_state = UpdateButtonState.CHECK
+
+
+def trigger_update_action(state: UiState, params: Params) -> None:
+  if state.update_button_state == UpdateButtonState.REBOOT:
+    params.put_bool("DoReboot", True, block=True)
+  else:
+    sig = "-SIGHUP" if state.update_button_state == UpdateButtonState.FETCH else "-SIGUSR1"
+    run_async(lambda: subprocess.run(["pkill", sig, "-f", "updater/ota.py"]))
 
 
 def refresh_wifi_status(state: UiState, wifi: WifiManager, params: Params) -> None:
@@ -173,6 +204,10 @@ def handle_main_input(state: UiState, wifi: WifiManager, params: Params, camera:
     return
   pos = rl.Vector2(pointer.x, pointer.y)
 
+  if rl.check_collision_point_rec(pos, update_button_rect(state)):
+    trigger_update_action(state, params)
+    return
+
   if rl.check_collision_point_rec(pos, qr_button_rect(state, 0)):
     state.qr_purpose = QrPurpose.WIFI
   elif rl.check_collision_point_rec(pos, qr_button_rect(state, 1)):
@@ -215,6 +250,15 @@ def handle_input(state: UiState, wifi: WifiManager, params: Params, camera: Came
 
 
 def draw_main_screen(state: UiState) -> None:
+  update_btn = update_button_rect(state)
+  label, color = {
+    UpdateButtonState.CHECK: ("Check Update", rl.DARKBLUE),
+    UpdateButtonState.FETCH: ("Update", rl.DARKBLUE),
+    UpdateButtonState.REBOOT: ("Reboot", rl.MAROON),
+  }[state.update_button_state]
+  rl.draw_rectangle(int(update_btn.x), int(update_btn.y), int(update_btn.width), int(update_btn.height), color)
+  rl.draw_text(label, int(update_btn.x) + 15, int(update_btn.y) + 20, 22, rl.WHITE)
+
   wifi_btn = qr_button_rect(state, 0)
   rl.draw_rectangle(int(wifi_btn.x), int(wifi_btn.y), int(wifi_btn.width), int(wifi_btn.height), rl.DARKBLUE)
   rl.draw_text("Scan WiFi QR", int(wifi_btn.x) + 15, int(wifi_btn.y) + 20, 22, rl.WHITE)
@@ -311,6 +355,7 @@ def main() -> None:
   rl.set_target_fps(15)
 
   refresh_wifi_status(state, wifi, params)
+  refresh_update_button_state(state, params)
   last_ip_poll = time.monotonic()
 
   while not rl.window_should_close():
@@ -318,6 +363,7 @@ def main() -> None:
     now = time.monotonic()
     if now - last_ip_poll > IP_POLL_INTERVAL:
       refresh_wifi_status(state, wifi, params)
+      refresh_update_button_state(state, params)
       last_ip_poll = now
 
     handle_input(state, wifi, params, camera)

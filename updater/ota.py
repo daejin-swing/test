@@ -316,6 +316,18 @@ def handle_agnos_update() -> None:
   pass
 
 
+def reboot_watcher(params: Params) -> None:
+  while True:
+    if params.get_bool("DoReboot"):
+      cloudlog.warning("updater: DoReboot requested, rebooting now")
+      params.put_bool("DoReboot", False, block=True)
+      try:
+        run(["sudo", "reboot"])
+      except subprocess.CalledProcessError:
+        cloudlog.exception("updater: reboot command failed")
+    time.sleep(1)
+
+
 
 class Updater:
   def __init__(self):
@@ -500,6 +512,12 @@ class Updater:
 
 def main() -> None:
   params = Params()
+
+  # Defense against a stale flag surviving a crash/previous boot -- a reboot should
+  # only ever happen because reboot_watcher() just consumed a fresh request, never
+  # because DoReboot was left set from before this process started.
+  params.put_bool("DoReboot", False, block=True)
+  threading.Thread(target=reboot_watcher, args=(params,), daemon=True).start()
 
   if params.get_bool("DisableUpdates"):
     cloudlog.warning("updates are disabled by the DisableUpdates param")
