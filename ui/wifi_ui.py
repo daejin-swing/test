@@ -7,7 +7,7 @@ import pyray as rl
 
 from common.log import cloudlog
 from common.params import Params
-from ui.camera_feed import CameraFeed
+from ui.camera_feed import CENTER_CROP_RATIO, CameraFeed
 from ui.net_info import get_ip_address
 from ui.wifi import WifiManager, WifiNetwork, try_connect_from_qr
 
@@ -410,6 +410,17 @@ def draw_camera_screen(state: UiState, camera: CameraFeed) -> None:
         x1, y1 = pts[i]
         x2, y2 = pts[(i + 1) % len(pts)]
         rl.draw_line_ex(rl.Vector2(x1, y1), rl.Vector2(x2, y2), 4, rl.GREEN)
+    elif state.qr_mode == QrMode.SCANNING:
+      # QR detection only runs on the center-cropped region (the driver cam's
+      # fisheye lens distorts too heavily near the edges to read) -- guide the
+      # user to hold the code inside that same region.
+      crop_w, crop_h = tex.width * CENTER_CROP_RATIO, tex.height * CENTER_CROP_RATIO
+      crop_x0, crop_y0 = (tex.width - crop_w) / 2, (tex.height - crop_h) / 2
+      guide_rec = rl.Rectangle(dest_x + crop_x0 * scale, dest_y + crop_y0 * scale, crop_w * scale, crop_h * scale)
+      rl.draw_rectangle_lines_ex(guide_rec, 3, rl.YELLOW)
+      hint = "QR 코드를 노란 박스 안에 맞춰주세요"
+      hint_w = rl.measure_text(hint, 24)
+      rl.draw_text(hint, int(state.screen_w / 2 - hint_w / 2), int(guide_rec.y + guide_rec.height + 15), 24, rl.YELLOW)
 
     if state.qr_mode == QrMode.PROCESSING:
       rl.draw_text("connecting...", 40, 40, 32, rl.WHITE)

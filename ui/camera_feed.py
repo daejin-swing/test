@@ -47,6 +47,21 @@ def extract_image(buf) -> np.ndarray:
   return np.ascontiguousarray(yuv_to_rgb(y, u, v))
 
 
+# The driver camera is a wide-angle/fisheye lens with heavy distortion away
+# from the center; openpilot itself never rectifies it (see common/transformations/
+# camera.py -- only a rough single-focal pinhole approximation exists, no real
+# distortion coefficients). Restricting QR detection to the least-distorted
+# center region is far cheaper than calibrating our own fisheye model.
+CENTER_CROP_RATIO = 0.55
+
+
+def center_crop(frame: np.ndarray, ratio: float = CENTER_CROP_RATIO) -> tuple[np.ndarray, tuple[int, int]]:
+  h, w = frame.shape[0], frame.shape[1]
+  crop_w, crop_h = int(w * ratio), int(h * ratio)
+  x0, y0 = (w - crop_w) // 2, (h - crop_h) // 2
+  return frame[y0:y0 + crop_h, x0:x0 + crop_w], (x0, y0)
+
+
 @dataclass
 class QrDetection:
   data: str
@@ -133,7 +148,11 @@ class CameraFeed:
         self.latest_qr = None
         continue
       try:
-        self.latest_qr = detect_qr(self.latest_frame)
+        cropped, (x0, y0) = center_crop(self.latest_frame)
+        qr = detect_qr(cropped)
+        if qr is not None:
+          qr.points = [(x + x0, y + y0) for x, y in qr.points]
+        self.latest_qr = qr
       except Exception:
         cloudlog.exception("camera_feed: failed to run QR detection")
 
