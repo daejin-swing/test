@@ -191,6 +191,86 @@ def init_overlay() -> None:
   cloudlog.info(f"git diff output:\n{git_diff}")
 
 
+SYSTEM_VENV_PYTHON = "/usr/local/venv/bin/python3"
+
+
+def _required_specs(requirements_file: str) -> list[tuple[str, str | None]]:
+  """Parses each requirement line into (lowercased name, exact version or
+  None if unpinned) -- e.g. "raylib==6.0.1.0" -> ("raylib", "6.0.1.0"),
+  "opencv-python-headless" -> ("opencv-python-headless", None)."""
+  specs = []
+  with open(requirements_file) as f:
+    for line in f:
+      line = line.split("#", 1)[0].strip()
+      if not line:
+        continue
+      if "==" in line:
+        name, version = line.split("==", 1)
+        specs.append((name.strip().lower(), version.strip()))
+      else:
+        name = re.split(r"[<>!~\s]", line, maxsplit=1)[0].strip().lower()
+        specs.append((name, None))
+  return specs
+
+
+def _installed_versions(python: str) -> dict[str, str]:
+  raw = run([python, "-m", "pip", "list", "--format=freeze"])
+  versions = {}
+  for line in raw.splitlines():
+    line = line.strip()
+    if "==" in line:
+      name, version = line.split("==", 1)
+      versions[name.strip().lower()] = version.strip()
+  return versions
+
+
+def sync_venv(finalized_dir: str) -> None:
+  """Bring finalized_dir/.venv in sync with ui/requirements.txt.
+
+  launch.sh puts .venv's site-packages ahead of the normal PYTHONPATH, which
+  already resolves to /usr/local/venv (the device's system-managed venv) --
+  so a requirement already satisfied there needs nothing in .venv at all;
+  the plain import lookup falls through and finds it. Only requirements
+  missing or at the wrong version in *both* places actually need fetching,
+  and only ever into .venv, never into the system venv.
+
+  This device's `uv`/`pip` are sudo-wrapped shims that remount the
+  (normally read-only) root filesystem and always produce root-owned
+  output, cache disabled -- so this is called as rarely as possible (only
+  for genuinely unsatisfied requirements), and .venv's ownership is forced
+  back to this process's own user immediately after, since it lives inside
+  the git-tracked workspace and a root-owned file there would make a later
+  `git clean` unable to touch it."""
+  venv_dir = os.path.join(finalized_dir, ".venv")
+  venv_python = os.path.join(venv_dir, "bin", "python3")
+  requirements_file = os.path.join(finalized_dir, "ui", "requirements.txt")
+
+  if not os.path.isdir(venv_dir):
+    run(["uv", "venv", venv_dir])
+    run(["sudo", "chown", "-R", f"{os.getuid()}:{os.getgid()}", venv_dir])
+
+  required = _required_specs(requirements_file)
+  system_installed = _installed_versions(SYSTEM_VENV_PYTHON)
+  local_installed = _installed_versions(venv_python)
+
+  def satisfied(name: str, version: str | None) -> bool:
+    for current in (local_installed.get(name), system_installed.get(name)):
+      if current is not None and (version is None or current == version):
+        return True
+    return False
+
+  missing = [f"{name}=={version}" if version else name
+             for name, version in required if not satisfied(name, version)]
+
+  if not missing:
+    cloudlog.info("sync_venv: already satisfied by .venv or /usr/local/venv")
+    return
+
+  cloudlog.info(f"sync_venv: fetching into .venv: {missing}")
+  run(["uv", "pip", "install", "--python", venv_python, *missing])
+  run(["sudo", "chown", "-R", f"{os.getuid()}:{os.getgid()}", venv_dir])
+
+
 def finalize_update() -> None:
   """Take the current OverlayFS merged view and finalize a copy outside of
   OverlayFS, ready to be swapped-in at BASEDIR. Copy using shutil.copytree"""
@@ -215,6 +295,9 @@ def finalize_update() -> None:
     cloudlog.event("Done git cleanup", duration=time.monotonic() - t)
   except subprocess.CalledProcessError:
     cloudlog.exception(f"Failed git cleanup, took {time.monotonic() - t:.3f} s")
+
+  cloudlog.info("syncing venv for finalized update")
+  sync_venv(FINALIZED)
 
   set_consistent_flag(True)
   cloudlog.info("done finalizing overlay")
@@ -388,7 +471,7 @@ class Updater:
       ["git", "checkout", "--force", "--no-recurse-submodules", "-B", branch, "FETCH_HEAD"],
       ["git", "branch", "--set-upstream-to", f"origin/{branch}"],
       ["git", "reset", "--hard"],
-      ["git", "clean", "-xdff"],
+      ["git", "clean", "-xdff", "-e", ".venv"],
       ["git", "submodule", "sync"],
       ["git", "submodule", "update", "--init", "--recursive"],
       ["git", "submodule", "foreach", "--recursive", "git", "reset", "--hard"],

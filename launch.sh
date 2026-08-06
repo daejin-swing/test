@@ -24,7 +24,17 @@ function launch {
 
   # 3. 파이썬 경로 및 라이브러리 링크 (Line 68 ~ 78)
   ln -sfn $(pwd) /data/pythonpath
-  export PYTHONPATH="$PWD"
+
+  # .venv (if present) takes priority over the default loading path, which
+  # already resolves to /usr/local/venv -- ota.py's finalize_update() only
+  # ever fetches into .venv whatever /usr/local/venv doesn't already have.
+  LOCAL_VENV="$DIR/.venv"
+  if [ -d "$LOCAL_VENV" ]; then
+    PYVER=$(python3 -c 'import sys; print(f"python{sys.version_info.major}.{sys.version_info.minor}")')
+    export PYTHONPATH="$LOCAL_VENV/lib/$PYVER/site-packages:$PWD"
+  else
+    export PYTHONPATH="$PWD"
+  fi
 
   # 5. 카메라 데몬 (크래시 시 재시작)
   ( while true; do ./camerad/run_camerad.sh; sleep 2; done ) &

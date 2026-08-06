@@ -1,4 +1,4 @@
 # Install once manually on-device over SSH: pip3 install -r ui/requirements.txt
 # Not installed automatically by launch.sh, to avoid a network dependency on every boot.
-raylib==6.0.1.0
+raylib  # pyray; no known minimum version requirement
 opencv-python-headless  # cv2.QRCodeDetector, used by ui/camera_feed.py's detect_qr()
