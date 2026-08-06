@@ -1,5 +1,6 @@
 import re
 import subprocess
+import time
 from dataclasses import dataclass
 
 from common.log import cloudlog
@@ -48,11 +49,26 @@ class WifiManager:
     try:
       output = subprocess.check_output(cmd, encoding="utf8", stderr=subprocess.STDOUT)
       cloudlog.event("wifi connect succeeded", ssid=ssid)
+      self._bump_autoconnect_priority(ssid)
       return True, output.strip()
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
       output = e.output if isinstance(e, subprocess.CalledProcessError) else str(e)
       cloudlog.event("wifi connect failed", ssid=ssid, error=output)
       return False, output.strip()
+
+  def _bump_autoconnect_priority(self, ssid: str) -> None:
+    # NetworkManager only falls back to "most recently used" as a last-resort
+    # tiebreaker among equal-priority saved profiles -- setting the priority to
+    # the current timestamp on every successful connect instead makes whichever
+    # network we just connected to deterministically outrank every other saved
+    # network the next time more than one is in range.
+    try:
+      subprocess.check_output(
+        ["nmcli", "connection", "modify", ssid, "connection.autoconnect-priority", str(int(time.time()))],
+        encoding="utf8", stderr=subprocess.STDOUT,
+      )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+      cloudlog.exception("wifi._bump_autoconnect_priority failed")
 
   def forget(self, ssid: str) -> None:
     try:

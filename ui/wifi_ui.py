@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 import threading
@@ -6,6 +7,7 @@ from dataclasses import dataclass
 
 import pyray as rl
 
+from common import BASEDIR
 from common.log import cloudlog
 from common.params import Params
 from ui.camera_feed import CameraFeed
@@ -16,6 +18,17 @@ from ui.wifi import WifiManager, try_connect_from_qr
 FALLBACK_WIDTH = 2160
 FALLBACK_HEIGHT = 1080
 IP_POLL_INTERVAL = 5.0
+
+
+def _read_version() -> str:
+  try:
+    with open(os.path.join(BASEDIR, "version")) as f:
+      return f.read().strip()
+  except OSError:
+    return "unknown"
+
+
+VERSION = _read_version()
 
 
 class Screen:
@@ -294,6 +307,8 @@ def draw_main_screen(state: UiState) -> None:
   rl.draw_text(f"IP: {state.ip or 'not connected'}", 40, 40, 40, rl.WHITE)
   status = f"Connected: {state.connected_ssid}" if state.connected_ssid else "Not connected"
   rl.draw_text(status, 40, 100, 24, rl.LIGHTGRAY)
+
+  rl.draw_text(f"v{VERSION}", 10, state.screen_h - 26, 18, rl.GRAY)
 
 
 def draw_camera_screen(state: UiState, camera: CameraFeed) -> None:
