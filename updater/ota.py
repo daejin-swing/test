@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import re
+import glob
 import datetime
 import subprocess
 import shutil
@@ -191,11 +192,15 @@ def init_overlay() -> None:
   cloudlog.info(f"git diff output:\n{git_diff}")
 
 
-SYSTEM_VENV_PYTHON = "/usr/local/venv/bin/python3"
+SYSTEM_VENV_DIR = "/usr/local/venv"
+
+
+def _normalize_name(name: str) -> str:
+  return name.strip().lower().replace("_", "-")
 
 
 def _required_specs(requirements_file: str) -> list[tuple[str, str | None]]:
-  """Parses each requirement line into (lowercased name, exact version or
+  """Parses each requirement line into (normalized name, exact version or
   None if unpinned) -- e.g. "raylib==6.0.1.0" -> ("raylib", "6.0.1.0"),
   "opencv-python-headless" -> ("opencv-python-headless", None)."""
   specs = []
@@ -206,21 +211,25 @@ def _required_specs(requirements_file: str) -> list[tuple[str, str | None]]:
         continue
       if "==" in line:
         name, version = line.split("==", 1)
-        specs.append((name.strip().lower(), version.strip()))
+        specs.append((_normalize_name(name), version.strip()))
       else:
-        name = re.split(r"[<>!~\s]", line, maxsplit=1)[0].strip().lower()
-        specs.append((name, None))
+        name = re.split(r"[<>!~\s]", line, maxsplit=1)[0]
+        specs.append((_normalize_name(name), None))
   return specs
 
 
-def _installed_versions(python: str) -> dict[str, str]:
-  raw = run([python, "-m", "pip", "list", "--format=freeze"])
+def _installed_versions(venv_dir: str) -> dict[str, str]:
+  """Reads package versions straight from *.dist-info folders in site-packages,
+  rather than `pip list` -- venvs `uv venv` creates don't ship pip at all, and
+  this also avoids invoking the sudo-wrapped `uv`/`pip` shims for a plain read."""
+  matches = glob.glob(os.path.join(venv_dir, "lib", "python3.*", "site-packages"))
+  if not matches:
+    return {}
   versions = {}
-  for line in raw.splitlines():
-    line = line.strip()
-    if "==" in line:
-      name, version = line.split("==", 1)
-      versions[name.strip().lower()] = version.strip()
+  for entry in os.listdir(matches[0]):
+    m = re.match(r"^(.+)-([^-]+)\.dist-info$", entry)
+    if m:
+      versions[_normalize_name(m.group(1))] = m.group(2)
   return versions
 
 
@@ -250,8 +259,8 @@ def sync_venv(finalized_dir: str) -> None:
     run(["sudo", "chown", "-R", f"{os.getuid()}:{os.getgid()}", venv_dir])
 
   required = _required_specs(requirements_file)
-  system_installed = _installed_versions(SYSTEM_VENV_PYTHON)
-  local_installed = _installed_versions(venv_python)
+  system_installed = _installed_versions(SYSTEM_VENV_DIR)
+  local_installed = _installed_versions(venv_dir)
 
   def satisfied(name: str, version: str | None) -> bool:
     for current in (local_installed.get(name), system_installed.get(name)):
