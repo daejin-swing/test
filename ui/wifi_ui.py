@@ -1,39 +1,30 @@
 import sys
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import pyray as rl
 
 from common.log import cloudlog
 from common.params import Params
-from ui.camera_feed import CENTER_CROP_RATIO, CameraFeed
+from ui.camera_feed import CameraFeed
 from ui.net_info import get_ip_address
-from ui.wifi import WifiManager, WifiNetwork, try_connect_from_qr
+from ui.ssh_keys import install_keys_from_url
+from ui.wifi import WifiManager, try_connect_from_qr
 
 FALLBACK_WIDTH = 2160
 FALLBACK_HEIGHT = 1080
 IP_POLL_INTERVAL = 5.0
-NETWORK_POLL_INTERVAL = 15.0
-
-KEYBOARD_ROWS = [
-  "1234567890",
-  "qwertyuiop",
-  "asdfghjkl",
-  "zxcvbnm",
-]
-
-LIST_X, LIST_Y, LIST_W, LIST_H = 40, 160, 600, 420
-ROW_H = 60
-DRAG_THRESHOLD = 12  # px of vertical movement before a press is treated as a scroll, not a tap
-WHEEL_SCROLL_SPEED = 40
 
 
 class Screen:
   MAIN = 0
-  PASSWORD = 1
-  STATUS = 2
-  CAMERA = 3
+  CAMERA = 1
+
+
+class QrPurpose:
+  WIFI = "wifi"
+  SSH = "ssh"
 
 
 class QrMode:
@@ -58,21 +49,15 @@ class Pointer:
 class UiState:
   screen: int = Screen.MAIN
   ip: str | None = None
-  networks: list[WifiNetwork] = field(default_factory=list)
-  selected_ssid: str | None = None
-  password_buffer: str = ""
-  status_message: str = ""
-  busy: bool = False
-  scroll_offset: float = 0.0
+  connected_ssid: str | None = None
+  wifi_status_busy: bool = False
   pointer_was_down: bool = False
-  drag_start: tuple[float, float] | None = None
-  drag_start_scroll: float = 0.0
-  dragging: bool = False
   screen_w: int = FALLBACK_WIDTH
   screen_h: int = FALLBACK_HEIGHT
   camera_starting: bool = False
   camera_texture: object | None = None
   camera_texture_size: tuple[int, int] | None = None
+  qr_purpose: str = QrPurpose.WIFI
   qr_mode: str = QrMode.SCANNING
   qr_frozen_frame: object | None = None
   qr_bbox: list[tuple[float, float]] | None = None
@@ -82,10 +67,6 @@ class UiState:
 
 def run_async(fn) -> None:
   threading.Thread(target=fn, daemon=True).start()
-
-
-def clamp(value: float, lo: float, hi: float) -> float:
-  return max(lo, min(hi, value))
 
 
 def get_pointer(state: UiState) -> Pointer:
@@ -104,54 +85,32 @@ def get_pointer(state: UiState) -> Pointer:
   return Pointer(x=pos.x, y=pos.y, down=down, just_pressed=just_pressed, just_released=just_released)
 
 
-def network_row_rect(index: int, scroll_offset: float) -> rl.Rectangle:
-  return rl.Rectangle(LIST_X, LIST_Y + index * ROW_H - scroll_offset, LIST_W, ROW_H - 8)
-
-
-# Both the "QR 접속" button (on Screen.MAIN) and every "< Back" button share this
-# same top-right corner spot, since only one of them is ever on screen at a time.
+# Every "< Back" button (shown one at a time, on Screen.CAMERA) uses this same
+# top-right corner spot.
 def top_right_button_rect(state: UiState) -> rl.Rectangle:
   return rl.Rectangle(state.screen_w - 220, 40, 180, 70)
 
 
-def max_scroll(state: UiState) -> float:
-  content_h = len(state.networks) * ROW_H
-  return max(0.0, content_h - LIST_H)
+# Screen.MAIN's two QR buttons stack in that same top-right corner.
+def qr_button_rect(state: UiState, index: int) -> rl.Rectangle:
+  return rl.Rectangle(state.screen_w - 260, 40 + index * 90, 220, 70)
 
 
-def refresh_ip(state: UiState, params: Params) -> None:
+def refresh_wifi_status(state: UiState, wifi: WifiManager, params: Params) -> None:
   ip = get_ip_address()
   if ip != state.ip:
     state.ip = ip
     params.put("IPAddress", ip or "", block=True)
 
-
-def refresh_networks(state: UiState, wifi: WifiManager) -> None:
-  if state.busy:
+  if state.wifi_status_busy:
     return
-  state.busy = True
+  state.wifi_status_busy = True
 
-  def _do_scan():
-    networks = wifi.scan()
-    state.networks = networks
-    state.scroll_offset = clamp(state.scroll_offset, 0, max_scroll(state))
-    state.busy = False
+  def _do_check():
+    state.connected_ssid = wifi.current_connection()
+    state.wifi_status_busy = False
 
-  run_async(_do_scan)
-
-
-def start_connect(state: UiState, wifi: WifiManager, params: Params, ssid: str, password: str | None) -> None:
-  state.busy = True
-  state.screen = Screen.STATUS
-  state.status_message = f"connecting to {ssid}..."
-
-  def _do_connect():
-    ok, msg = wifi.connect(ssid, password)
-    state.status_message = "connected" if ok else f"failed: {msg}"
-    params.put_bool("WifiConnected", ok, block=True)
-    state.busy = False
-
-  run_async(_do_connect)
+  run_async(_do_check)
 
 
 def start_camera(state: UiState, camera: CameraFeed) -> None:
@@ -177,104 +136,53 @@ def reset_qr_scan(state: UiState, camera: CameraFeed) -> None:
   camera.set_scan_enabled(True)
 
 
-def start_qr_connect(state: UiState, wifi: WifiManager, params: Params, camera: CameraFeed, qr_data: str) -> None:
+def start_qr_action(state: UiState, wifi: WifiManager, params: Params, camera: CameraFeed, qr_data: str) -> None:
   state.qr_connecting = True
 
-  def _do_connect():
+  def _do_action():
     try:
-      ok, msg = try_connect_from_qr(qr_data, wifi)
+      if state.qr_purpose == QrPurpose.WIFI:
+        ok, msg = try_connect_from_qr(qr_data, wifi)
+      else:
+        ok, msg = install_keys_from_url(qr_data)
     except Exception:
-      cloudlog.exception("wifi_ui: try_connect_from_qr raised")
+      cloudlog.exception("wifi_ui: QR action raised")
       ok, msg = False, "internal error"
 
     state.qr_connecting = False
     if ok:
-      params.put_bool("WifiConnected", True, block=True)
-      refresh_ip(state, params)
+      if state.qr_purpose == QrPurpose.WIFI:
+        params.put_bool("WifiConnected", True, block=True)
+        refresh_wifi_status(state, wifi, params)
       # Only steal navigation if the user is still on the camera screen --
-      # they may have already backed out while this connect attempt ran.
+      # they may have already backed out while this action ran.
       if state.screen == Screen.CAMERA:
         reset_qr_scan(state, camera)
         state.screen = Screen.MAIN
     else:
-      cloudlog.info(f"wifi_ui: QR connect failed: {msg}")
+      cloudlog.info(f"wifi_ui: QR action failed: {msg}")
       if state.screen == Screen.CAMERA:
         state.qr_mode = QrMode.INVALID
         state.qr_invalid_until = time.monotonic() + QR_INVALID_DISPLAY_S
 
-  run_async(_do_connect)
-
-
-def select_network(state: UiState, wifi: WifiManager, params: Params, net: WifiNetwork) -> None:
-  state.selected_ssid = net.ssid
-  state.password_buffer = ""
-  is_open = net.security in ("", "--")
-  if is_open or net.saved:
-    # nmcli reconnects saved profiles without a password; open networks need none either
-    start_connect(state, wifi, params, net.ssid, None)
-  else:
-    state.screen = Screen.PASSWORD
+  run_async(_do_action)
 
 
 def handle_main_input(state: UiState, wifi: WifiManager, params: Params, camera: CameraFeed, pointer: Pointer) -> None:
-  if pointer.just_pressed and rl.check_collision_point_rec(rl.Vector2(pointer.x, pointer.y), top_right_button_rect(state)):
-    state.screen = Screen.CAMERA
-    state.drag_start = None
-    reset_qr_scan(state, camera)
-    start_camera(state, camera)
-    return
-
-  wheel = rl.get_mouse_wheel_move()
-  if wheel:
-    state.scroll_offset = clamp(state.scroll_offset - wheel * WHEEL_SCROLL_SPEED, 0, max_scroll(state))
-
-  if pointer.just_pressed:
-    state.drag_start = (pointer.x, pointer.y)
-    state.drag_start_scroll = state.scroll_offset
-    state.dragging = False
-  elif pointer.down and state.drag_start is not None:
-    dy = pointer.y - state.drag_start[1]
-    if abs(dy) > DRAG_THRESHOLD:
-      state.dragging = True
-      state.scroll_offset = clamp(state.drag_start_scroll - dy, 0, max_scroll(state))
-  elif pointer.just_released:
-    if state.drag_start is not None and not state.dragging:
-      if LIST_Y <= pointer.y <= LIST_Y + LIST_H:
-        for i, net in enumerate(state.networks):
-          row_rect = network_row_rect(i, state.scroll_offset)
-          if rl.check_collision_point_rec(rl.Vector2(pointer.x, pointer.y), row_rect):
-            select_network(state, wifi, params, net)
-            break
-    state.drag_start = None
-    state.dragging = False
-
-
-def handle_password_input(state: UiState, wifi: WifiManager, params: Params, pointer: Pointer) -> None:
   if not pointer.just_pressed:
     return
+  pos = rl.Vector2(pointer.x, pointer.y)
 
-  if rl.check_collision_point_rec(rl.Vector2(pointer.x, pointer.y), top_right_button_rect(state)):
-    state.screen = Screen.MAIN
+  if rl.check_collision_point_rec(pos, qr_button_rect(state, 0)):
+    state.qr_purpose = QrPurpose.WIFI
+  elif rl.check_collision_point_rec(pos, qr_button_rect(state, 1)):
+    state.qr_purpose = QrPurpose.SSH
+  else:
     return
 
-  key_w, key_h = 90, 90
-  start_x, start_y = 40, 300
-  for row_idx, row in enumerate(KEYBOARD_ROWS):
-    for col_idx, ch in enumerate(row):
-      key_rect = rl.Rectangle(start_x + col_idx * key_w, start_y + row_idx * key_h, key_w - 6, key_h - 6)
-      if rl.check_collision_point_rec(rl.Vector2(pointer.x, pointer.y), key_rect):
-        state.password_buffer += ch
-        return
-
-  connect_rect = rl.Rectangle(start_x, start_y + len(KEYBOARD_ROWS) * key_h + 20, 300, 80)
-  if rl.check_collision_point_rec(rl.Vector2(pointer.x, pointer.y), connect_rect):
-    if state.selected_ssid is not None:
-      start_connect(state, wifi, params, state.selected_ssid, state.password_buffer)
-
-
-def handle_status_input(state: UiState, pointer: Pointer) -> None:
-  if not state.busy and pointer.just_pressed:
-    state.screen = Screen.MAIN
+  state.screen = Screen.CAMERA
+  reset_qr_scan(state, camera)
+  start_camera(state, camera)
 
 
 def handle_camera_input(state: UiState, camera: CameraFeed, pointer: Pointer) -> None:
@@ -291,7 +199,7 @@ def update_camera_screen(state: UiState, wifi: WifiManager, params: Params, came
       state.qr_bbox = qr.points
       state.qr_mode = QrMode.PROCESSING
       camera.set_scan_enabled(False)
-      start_qr_connect(state, wifi, params, camera, qr.data)
+      start_qr_action(state, wifi, params, camera, qr.data)
   elif state.qr_mode == QrMode.INVALID:
     if time.monotonic() >= state.qr_invalid_until:
       reset_qr_scan(state, camera)
@@ -301,60 +209,23 @@ def handle_input(state: UiState, wifi: WifiManager, params: Params, camera: Came
   pointer = get_pointer(state)
   if state.screen == Screen.MAIN:
     handle_main_input(state, wifi, params, camera, pointer)
-  elif state.screen == Screen.PASSWORD:
-    handle_password_input(state, wifi, params, pointer)
-  elif state.screen == Screen.STATUS:
-    handle_status_input(state, pointer)
   elif state.screen == Screen.CAMERA:
     handle_camera_input(state, camera, pointer)
     update_camera_screen(state, wifi, params, camera)
 
 
 def draw_main_screen(state: UiState) -> None:
-  qr = top_right_button_rect(state)
-  rl.draw_rectangle(int(qr.x), int(qr.y), int(qr.width), int(qr.height), rl.DARKBLUE)
-  rl.draw_text("QR 접속", int(qr.x) + 35, int(qr.y) + 20, 24, rl.WHITE)
+  wifi_btn = qr_button_rect(state, 0)
+  rl.draw_rectangle(int(wifi_btn.x), int(wifi_btn.y), int(wifi_btn.width), int(wifi_btn.height), rl.DARKBLUE)
+  rl.draw_text("Scan WiFi QR", int(wifi_btn.x) + 15, int(wifi_btn.y) + 20, 22, rl.WHITE)
+
+  ssh_btn = qr_button_rect(state, 1)
+  rl.draw_rectangle(int(ssh_btn.x), int(ssh_btn.y), int(ssh_btn.width), int(ssh_btn.height), rl.DARKBLUE)
+  rl.draw_text("Add SSH Key", int(ssh_btn.x) + 15, int(ssh_btn.y) + 20, 22, rl.WHITE)
 
   rl.draw_text(f"IP: {state.ip or 'not connected'}", 40, 40, 40, rl.WHITE)
-  rl.draw_text("Networks (tap to connect, drag to scroll):", 40, 100, 24, rl.LIGHTGRAY)
-
-  rl.begin_scissor_mode(LIST_X, LIST_Y, LIST_W, LIST_H)
-  for i, net in enumerate(state.networks):
-    rect = network_row_rect(i, state.scroll_offset)
-    if rect.y + rect.height < LIST_Y or rect.y > LIST_Y + LIST_H:
-      continue
-    label = f"{net.ssid}  ({net.signal}%)  {'saved' if net.saved else net.security}"
-    rl.draw_rectangle(int(rect.x), int(rect.y), int(rect.width), int(rect.height), rl.DARKGRAY)
-    rl.draw_text(label, int(rect.x) + 10, int(rect.y) + 15, 20, rl.WHITE)
-  rl.end_scissor_mode()
-
-
-def draw_password_screen(state: UiState) -> None:
-  back = top_right_button_rect(state)
-  rl.draw_rectangle(int(back.x), int(back.y), int(back.width), int(back.height), rl.MAROON)
-  rl.draw_text("< Back", int(back.x) + 25, int(back.y) + 20, 24, rl.WHITE)
-
-  rl.draw_text(f"SSID: {state.selected_ssid}", 40, 40, 32, rl.WHITE)
-  rl.draw_text(f"Password: {'*' * len(state.password_buffer)}", 40, 100, 28, rl.LIGHTGRAY)
-
-  key_w, key_h = 90, 90
-  start_x, start_y = 40, 300
-  for row_idx, row in enumerate(KEYBOARD_ROWS):
-    for col_idx, ch in enumerate(row):
-      x = start_x + col_idx * key_w
-      y = start_y + row_idx * key_h
-      rl.draw_rectangle(x, y, key_w - 6, key_h - 6, rl.DARKGRAY)
-      rl.draw_text(ch, x + 30, y + 25, 24, rl.WHITE)
-
-  connect_y = start_y + len(KEYBOARD_ROWS) * key_h + 20
-  rl.draw_rectangle(start_x, connect_y, 300, 80, rl.DARKGREEN)
-  rl.draw_text("Connect", start_x + 80, connect_y + 25, 28, rl.WHITE)
-
-
-def draw_status_screen(state: UiState) -> None:
-  rl.draw_text(state.status_message, 40, 40, 32, rl.WHITE)
-  if not state.busy:
-    rl.draw_text("tap anywhere to go back", 40, 100, 20, rl.LIGHTGRAY)
+  status = f"Connected: {state.connected_ssid}" if state.connected_ssid else "Not connected"
+  rl.draw_text(status, 40, 100, 24, rl.LIGHTGRAY)
 
 
 def draw_camera_screen(state: UiState, camera: CameraFeed) -> None:
@@ -410,17 +281,6 @@ def draw_camera_screen(state: UiState, camera: CameraFeed) -> None:
         x1, y1 = pts[i]
         x2, y2 = pts[(i + 1) % len(pts)]
         rl.draw_line_ex(rl.Vector2(x1, y1), rl.Vector2(x2, y2), 4, rl.GREEN)
-    elif state.qr_mode == QrMode.SCANNING:
-      # QR detection only runs on the center-cropped region (the driver cam's
-      # fisheye lens distorts too heavily near the edges to read) -- guide the
-      # user to hold the code inside that same region.
-      crop_w, crop_h = tex.width * CENTER_CROP_RATIO, tex.height * CENTER_CROP_RATIO
-      crop_x0, crop_y0 = (tex.width - crop_w) / 2, (tex.height - crop_h) / 2
-      guide_rec = rl.Rectangle(dest_x + crop_x0 * scale, dest_y + crop_y0 * scale, crop_w * scale, crop_h * scale)
-      rl.draw_rectangle_lines_ex(guide_rec, 3, rl.YELLOW)
-      hint = "QR 코드를 노란 박스 안에 맞춰주세요"
-      hint_w = rl.measure_text(hint, 24)
-      rl.draw_text(hint, int(state.screen_w / 2 - hint_w / 2), int(guide_rec.y + guide_rec.height + 15), 24, rl.YELLOW)
 
     if state.qr_mode == QrMode.PROCESSING:
       rl.draw_text("connecting...", 40, 40, 32, rl.WHITE)
@@ -450,20 +310,15 @@ def main() -> None:
   state.screen_h = rl.get_screen_height() or FALLBACK_HEIGHT
   rl.set_target_fps(15)
 
-  refresh_ip(state, params)
-  refresh_networks(state, wifi)
+  refresh_wifi_status(state, wifi, params)
   last_ip_poll = time.monotonic()
-  last_network_poll = time.monotonic()
 
   while not rl.window_should_close():
     rl.poll_input_events()
     now = time.monotonic()
     if now - last_ip_poll > IP_POLL_INTERVAL:
-      refresh_ip(state, params)
+      refresh_wifi_status(state, wifi, params)
       last_ip_poll = now
-    if now - last_network_poll > NETWORK_POLL_INTERVAL and state.screen == Screen.MAIN:
-      refresh_networks(state, wifi)
-      last_network_poll = now
 
     handle_input(state, wifi, params, camera)
 
@@ -471,10 +326,6 @@ def main() -> None:
     rl.clear_background(rl.BLACK)
     if state.screen == Screen.MAIN:
       draw_main_screen(state)
-    elif state.screen == Screen.PASSWORD:
-      draw_password_screen(state)
-    elif state.screen == Screen.STATUS:
-      draw_status_screen(state)
     elif state.screen == Screen.CAMERA:
       draw_camera_screen(state, camera)
     rl.end_drawing()
