@@ -1,4 +1,7 @@
 # Install once manually on-device over SSH: pip3 install -r ui/requirements.txt
 # Not installed automatically by launch.sh, to avoid a network dependency on every boot.
 raylib  # pyray; no known minimum version requirement
-opencv-python-headless  # cv2.QRCodeDetector, used by ui/camera_feed.py's detect_qr()
+zxing-cpp  # zxingcpp, used by ui/camera_feed.py's detect_qr() -- self-contained
+           # wheel, no system libzbar needed, and reads stylized/dense QR
+           # codes (e.g. phone wifi-share codes) far better than cv2's
+           # built-in QRCodeDetector did.

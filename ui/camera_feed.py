@@ -54,12 +54,22 @@ class QrDetection:
 
 
 def detect_qr(frame: np.ndarray) -> QrDetection | None:
-  import cv2  # lazy: keeps this module importable/testable without opencv installed
+  # lazy: keeps this module importable/testable without zxing-cpp installed.
+  # zxing-cpp reads stylized QR codes (rounded/dot modules, dense grids like
+  # phone wifi-share codes) far more reliably than cv2's built-in
+  # QRCodeDetector, which only recognizes the classic square finder pattern.
+  import zxingcpp
 
-  data, points, _ = cv2.QRCodeDetector().detectAndDecode(frame)
-  if not data or points is None:
+  barcodes = zxingcpp.read_barcodes(frame, formats=zxingcpp.BarcodeFormat.QRCode)
+  if not barcodes:
     return None
-  return QrDetection(data=data, points=[(float(x), float(y)) for x, y in points.reshape(-1, 2)])
+  barcode = barcodes[0]
+  pos = barcode.position
+  points = [(float(pos.top_left.x), float(pos.top_left.y)),
+            (float(pos.top_right.x), float(pos.top_right.y)),
+            (float(pos.bottom_right.x), float(pos.bottom_right.y)),
+            (float(pos.bottom_left.x), float(pos.bottom_left.y))]
+  return QrDetection(data=barcode.text, points=points)
 
 
 class CameraFeed:
