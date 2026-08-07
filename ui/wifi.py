@@ -80,15 +80,23 @@ class WifiManager:
     # ones, so this still falls back to any other previously-connected network
     # (with its own saved password) if this one isn't reachable. Also force
     # autoconnect back on, in case it was ever manually disabled.
-    try:
-      subprocess.check_output(
-        ["nmcli", "connection", "modify", name,
-         "connection.autoconnect", "yes",
-         "connection.autoconnect-priority", str(int(time.time()))],
-        encoding="utf8", stderr=subprocess.STDOUT,
-      )
-    except (subprocess.CalledProcessError, FileNotFoundError):
-      cloudlog.exception("wifi._bump_autoconnect_priority failed")
+    #
+    # Each property is set in its own nmcli call (rather than passing both to
+    # one invocation) so a rejection of one property doesn't also block the
+    # other, and so any failure's actual nmcli output -- not just the exit
+    # code -- ends up in the log instead of a bare "exit status 2".
+    for prop, value in (
+      ("connection.autoconnect", "yes"),
+      ("connection.autoconnect-priority", str(int(time.time()))),
+    ):
+      try:
+        subprocess.check_output(
+          ["nmcli", "connection", "modify", name, prop, value],
+          encoding="utf8", stderr=subprocess.STDOUT,
+        )
+      except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        output = e.output if isinstance(e, subprocess.CalledProcessError) else str(e)
+        cloudlog.exception(f"wifi._bump_autoconnect_priority failed setting {prop}={value}: {output}")
 
   def forget(self, ssid: str) -> None:
     try:
