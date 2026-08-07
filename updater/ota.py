@@ -354,9 +354,16 @@ class Updater:
 
   @property
   def update_ready(self) -> bool:
+    # "Ready to reboot" must mean FINALIZED actually differs from what's
+    # currently running (BASEDIR) -- comparing BASEDIR against the remote's
+    # latest known commit instead (self.branches[...]) is wrong: check_for_update()
+    # refreshes that on every CHECK, so it goes stale the instant a new commit
+    # lands upstream, well before fetch_update() ever runs. That falsely
+    # reports "ready" (and drives a wasted reboot) whenever FINALIZED is
+    # consistent but simply hasn't caught up to the newest push yet.
     consistent_file = Path(os.path.join(FINALIZED, ".overlay_consistent"))
     if consistent_file.is_file():
-      hash_mismatch = self.get_commit_hash(BASEDIR) != self.branches[self.target_branch]
+      hash_mismatch = self.get_commit_hash(FINALIZED) != self.get_commit_hash(BASEDIR)
       branch_mismatch = self.get_branch(BASEDIR) != self.target_branch
       on_target_branch = self.get_branch(FINALIZED) == self.target_branch
       return ((hash_mismatch or branch_mismatch) and on_target_branch)
