@@ -64,6 +64,18 @@ class TestWifiParsing(unittest.TestCase):
     mock_check_output.return_value = "lo:loopback\n"
     self.assertIsNone(self.wifi._active_wifi_connection_name())
 
+  @patch("subprocess.check_output")
+  def test_bump_autoconnect_priority_maxes_winner_resets_others(self, mock_check_output):
+    self.wifi.list_saved = lambda: ["SWING", "openpilot connection SWING_GUEST", "Hotspot"]
+    self.wifi._bump_autoconnect_priority("openpilot connection SWING_GUEST")
+    calls = [c.args[0] for c in mock_check_output.call_args_list]
+    self.assertEqual(calls, [
+      ["nmcli", "connection", "modify", "SWING", "connection.autoconnect-priority", "0"],
+      ["nmcli", "connection", "modify", "Hotspot", "connection.autoconnect-priority", "0"],
+      ["nmcli", "connection", "modify", "openpilot connection SWING_GUEST", "connection.autoconnect", "yes"],
+      ["nmcli", "connection", "modify", "openpilot connection SWING_GUEST", "connection.autoconnect-priority", "999"],
+    ])
+
 
 class TestParseWifiQr(unittest.TestCase):
   def test_wpa_network(self):

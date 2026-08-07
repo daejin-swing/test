@@ -1,6 +1,5 @@
 import re
 import subprocess
-import time
 from dataclasses import dataclass
 
 from common.log import cloudlog
@@ -15,6 +14,8 @@ class WifiNetwork:
 
 
 class WifiManager:
+  MAX_PRIORITY = 999  # this NetworkManager build rejects autoconnect-priority outside [-999, 999]
+
   def scan(self, rescan: bool = True) -> list[WifiNetwork]:
     cmd = ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY", "dev", "wifi", "list"]
     if rescan:
@@ -78,25 +79,35 @@ class WifiManager:
     # NetworkManager prefers the highest-priority connection among whichever
     # saved networks are actually in range -- it does NOT exclude lower-priority
     # ones, so this still falls back to any other previously-connected network
-    # (with its own saved password) if this one isn't reachable. Also force
-    # autoconnect back on, in case it was ever manually disabled.
+    # (with its own saved password) if this one isn't reachable.
     #
-    # Each property is set in its own nmcli call (rather than passing both to
-    # one invocation) so a rejection of one property doesn't also block the
-    # other, and so any failure's actual nmcli output -- not just the exit
-    # code -- ends up in the log instead of a bare "exit status 2".
-    for prop, value in (
-      ("connection.autoconnect", "yes"),
-      ("connection.autoconnect-priority", str(int(time.time()))),
-    ):
-      try:
-        subprocess.check_output(
-          ["nmcli", "connection", "modify", name, prop, value],
-          encoding="utf8", stderr=subprocess.STDOUT,
-        )
-      except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        output = e.output if isinstance(e, subprocess.CalledProcessError) else str(e)
-        cloudlog.exception(f"wifi._bump_autoconnect_priority failed setting {prop}={value}: {output}")
+    # An ever-increasing value (e.g. a unix timestamp) can't represent "most
+    # recent" here since the range is tiny -- instead, give the just-connected
+    # network the max priority and reset every other saved wifi profile to a
+    # neutral one, so it deterministically outranks them without needing
+    # unbounded growth. This only changes relative ordering, not autoconnect
+    # itself, so nothing loses its ability to be chosen as a fallback.
+    for other in self.list_saved():
+      if other != name:
+        self._set_autoconnect_priority(other, 0)
+    self._set_autoconnect(name, "yes")
+    self._set_autoconnect_priority(name, self.MAX_PRIORITY)
+
+  def _modify_connection(self, name: str, prop: str, value: str) -> None:
+    try:
+      subprocess.check_output(
+        ["nmcli", "connection", "modify", name, prop, value],
+        encoding="utf8", stderr=subprocess.STDOUT,
+      )
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+      output = e.output if isinstance(e, subprocess.CalledProcessError) else str(e)
+      cloudlog.exception(f"wifi._modify_connection failed setting {name} {prop}={value}: {output}")
+
+  def _set_autoconnect(self, name: str, value: str) -> None:
+    self._modify_connection(name, "connection.autoconnect", value)
+
+  def _set_autoconnect_priority(self, name: str, value: int) -> None:
+    self._modify_connection(name, "connection.autoconnect-priority", str(value))
 
   def forget(self, ssid: str) -> None:
     try:
