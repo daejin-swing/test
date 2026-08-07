@@ -66,7 +66,10 @@ class WifiManager:
       return None
     for line in raw.splitlines():
       parts = line.split(":")
-      if len(parts) >= 2 and parts[1] == "802-11-wireless":
+      # nmcli versions disagree on whether TYPE prints the raw setting name
+      # ("802-11-wireless") or the friendly alias ("wifi") -- this device's
+      # nmcli uses "wifi", so accept either rather than assuming one.
+      if len(parts) >= 2 and parts[1] in ("wifi", "802-11-wireless"):
         return parts[0]
     return None
 
@@ -141,7 +144,7 @@ class WifiManager:
       if len(parts) < 2:
         continue
       name, conn_type = parts[0], parts[1]
-      if conn_type == "802-11-wireless":
+      if conn_type in ("wifi", "802-11-wireless"):
         names.append(name)
     return names
 

@@ -31,8 +31,10 @@ class TestWifiParsing(unittest.TestCase):
     self.assertEqual([n.ssid for n in networks], ["RealSSID"])
 
   def test_parse_saved_output(self):
+    # Real device nmcli reports TYPE as the friendly alias "wifi", not the raw
+    # setting name "802-11-wireless" -- both must be recognized.
     raw = (
-      "MyHomeWifi:802-11-wireless\n"
+      "MyHomeWifi:wifi\n"
       "eth0:802-3-ethernet\n"
       "OfficeWifi:802-11-wireless\n"
     )
@@ -43,13 +45,19 @@ class TestWifiParsing(unittest.TestCase):
   def test_active_wifi_connection_name_ignores_non_prefixed_ssid(self, mock_check_output):
     # This device's wifi profiles are named "openpilot connection <ssid>", not
     # the bare ssid -- the active-connection lookup must return that real name
-    # rather than assume it matches the ssid string.
+    # rather than assume it matches the ssid string. Also confirmed on-device
+    # that nmcli reports TYPE as "wifi", not "802-11-wireless".
     mock_check_output.return_value = (
       "lo:loopback\n"
       "lte:gsm\n"
-      "openpilot connection SWING_GUEST:802-11-wireless\n"
+      "openpilot connection SWING_GUEST:wifi\n"
     )
     self.assertEqual(self.wifi._active_wifi_connection_name(), "openpilot connection SWING_GUEST")
+
+  @patch("subprocess.check_output")
+  def test_active_wifi_connection_name_accepts_raw_type_name_too(self, mock_check_output):
+    mock_check_output.return_value = "MyHomeWifi:802-11-wireless\n"
+    self.assertEqual(self.wifi._active_wifi_connection_name(), "MyHomeWifi")
 
   @patch("subprocess.check_output")
   def test_active_wifi_connection_name_none_when_no_wifi_active(self, mock_check_output):
