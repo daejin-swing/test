@@ -56,15 +56,35 @@ class WifiManager:
       cloudlog.event("wifi connect failed", ssid=ssid, error=output)
       return False, output.strip()
 
+  def _active_wifi_connection_name(self) -> str | None:
+    try:
+      raw = subprocess.check_output(
+        ["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show", "--active"],
+        encoding="utf8", stderr=subprocess.STDOUT,
+      )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+      return None
+    for line in raw.splitlines():
+      parts = line.split(":")
+      if len(parts) >= 2 and parts[1] == "802-11-wireless":
+        return parts[0]
+    return None
+
   def _bump_autoconnect_priority(self, ssid: str) -> None:
     # NetworkManager only falls back to "most recently used" as a last-resort
     # tiebreaker among equal-priority saved profiles -- setting the priority to
     # the current timestamp on every successful connect instead makes whichever
     # network we just connected to deterministically outrank every other saved
     # network the next time more than one is in range.
+    #
+    # The profile's `connection.id` (what `nmcli connection modify` addresses)
+    # isn't guaranteed to equal the SSID -- this device's profiles are named
+    # "openpilot connection <ssid>", not "<ssid>" -- so look up the actual name
+    # of the connection that's active right now instead of assuming it matches.
+    name = self._active_wifi_connection_name() or ssid
     try:
       subprocess.check_output(
-        ["nmcli", "connection", "modify", ssid, "connection.autoconnect-priority", str(int(time.time()))],
+        ["nmcli", "connection", "modify", name, "connection.autoconnect-priority", str(int(time.time()))],
         encoding="utf8", stderr=subprocess.STDOUT,
       )
     except (subprocess.CalledProcessError, FileNotFoundError):

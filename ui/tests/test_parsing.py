@@ -39,6 +39,23 @@ class TestWifiParsing(unittest.TestCase):
     saved = self.wifi._parse_saved_output(raw)
     self.assertEqual(saved, ["MyHomeWifi", "OfficeWifi"])
 
+  @patch("subprocess.check_output")
+  def test_active_wifi_connection_name_ignores_non_prefixed_ssid(self, mock_check_output):
+    # This device's wifi profiles are named "openpilot connection <ssid>", not
+    # the bare ssid -- the active-connection lookup must return that real name
+    # rather than assume it matches the ssid string.
+    mock_check_output.return_value = (
+      "lo:loopback\n"
+      "lte:gsm\n"
+      "openpilot connection SWING_GUEST:802-11-wireless\n"
+    )
+    self.assertEqual(self.wifi._active_wifi_connection_name(), "openpilot connection SWING_GUEST")
+
+  @patch("subprocess.check_output")
+  def test_active_wifi_connection_name_none_when_no_wifi_active(self, mock_check_output):
+    mock_check_output.return_value = "lo:loopback\n"
+    self.assertIsNone(self.wifi._active_wifi_connection_name())
+
 
 class TestParseWifiQr(unittest.TestCase):
   def test_wpa_network(self):
