@@ -64,6 +64,16 @@ class TestWifiParsing(unittest.TestCase):
     mock_check_output.return_value = "lo:loopback\n"
     self.assertIsNone(self.wifi._active_wifi_connection_name())
 
+  @patch("subprocess.check_output")
+  def test_disable_other_autoconnect_skips_active_and_non_wifi(self, mock_check_output):
+    self.wifi.list_saved = lambda: ["SWING", "SWING_GUEST", "Hotspot"]
+    self.wifi._disable_other_autoconnect("SWING_GUEST")
+    calls = [c.args[0] for c in mock_check_output.call_args_list]
+    self.assertEqual(calls, [
+      ["nmcli", "connection", "modify", "SWING", "connection.autoconnect", "no"],
+      ["nmcli", "connection", "modify", "Hotspot", "connection.autoconnect", "no"],
+    ])
+
 
 class TestParseWifiQr(unittest.TestCase):
   def test_wpa_network(self):
