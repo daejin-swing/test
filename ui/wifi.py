@@ -51,7 +51,6 @@ class WifiManager:
       cloudlog.event("wifi connect succeeded", ssid=ssid)
       name = self._active_wifi_connection_name() or ssid
       self._bump_autoconnect_priority(name)
-      self._disable_other_autoconnect(name)
       return True, output.strip()
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
       output = e.output if isinstance(e, subprocess.CalledProcessError) else str(e)
@@ -76,13 +75,11 @@ class WifiManager:
     return None
 
   def _bump_autoconnect_priority(self, name: str) -> None:
-    # Also force autoconnect back on: this profile may have had it disabled by
-    # an earlier _disable_other_autoconnect() call, e.g. if the user switches
-    # back and forth between two networks via QR. Priority itself is kept as a
-    # record of connection recency (belt-and-suspenders) -- the actual "only
-    # the most recent wins" guarantee comes from disabling every OTHER network
-    # below, since relying on NetworkManager's own priority tiebreak alone has
-    # proven unreliable on this device.
+    # NetworkManager prefers the highest-priority connection among whichever
+    # saved networks are actually in range -- it does NOT exclude lower-priority
+    # ones, so this still falls back to any other previously-connected network
+    # (with its own saved password) if this one isn't reachable. Also force
+    # autoconnect back on, in case it was ever manually disabled.
     try:
       subprocess.check_output(
         ["nmcli", "connection", "modify", name,
@@ -92,22 +89,6 @@ class WifiManager:
       )
     except (subprocess.CalledProcessError, FileNotFoundError):
       cloudlog.exception("wifi._bump_autoconnect_priority failed")
-
-  def _disable_other_autoconnect(self, active_name: str) -> None:
-    # Deterministically make the just-connected network the ONLY wifi profile
-    # NetworkManager can autoconnect to, instead of hoping it correctly
-    # respects autoconnect-priority ordering among multiple eligible saved
-    # networks (which repeatedly did not happen as expected on this device).
-    for name in self.list_saved():
-      if name == active_name:
-        continue
-      try:
-        subprocess.check_output(
-          ["nmcli", "connection", "modify", name, "connection.autoconnect", "no"],
-          encoding="utf8", stderr=subprocess.STDOUT,
-        )
-      except (subprocess.CalledProcessError, FileNotFoundError):
-        cloudlog.exception(f"wifi._disable_other_autoconnect failed for {name}")
 
   def forget(self, ssid: str) -> None:
     try:
