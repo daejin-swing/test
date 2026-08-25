@@ -87,7 +87,7 @@
       <h2 class="text-lg font-bold text-white flex items-center">
         <i class="fa-solid fa-microchip mr-2 text-indigo-400"></i> 연결된 디바이스 목록
       </h2>
-      <span class="text-xs text-slate-400">30초 자동 갱신</span>
+      <span class="text-xs text-slate-400">실시간 썸네일 스트림 갱신 중</span>
     </div>
 
     <div id="device-grid" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -189,6 +189,8 @@
         const sys = d.system_status || {};
         const cfg = d.config_json || {};
         const isOnline = d.last_heartbeat_at && ((new Date() - new Date(d.last_heartbeat_at)) / 1000 < 90);
+        const hasInitialThumb = !!d.latest_thumbnail;
+        const initialMime = d.latest_thumbnail && d.latest_thumbnail.startsWith('<svg') ? 'image/svg+xml' : 'image/jpeg';
 
         return `
           <div class="glass rounded-2xl overflow-hidden border border-slate-800 shadow-xl flex flex-col">
@@ -220,8 +222,11 @@
               
               <!-- 1-FPS Live Thumbnail Stream -->
               <div class="relative bg-slate-950 rounded-xl overflow-hidden aspect-video border border-slate-800 flex items-center justify-center group">
-                <img id="thumb-${d.device_id}" class="w-full h-full object-cover hidden" alt="Live Stream">
-                <div id="thumb-placeholder-${d.device_id}" class="text-center p-4">
+                <img id="thumb-${d.device_id}" 
+                     src="${hasInitialThumb ? `data:${initialMime};base64,${d.latest_thumbnail}` : ''}" 
+                     class="w-full h-full object-cover ${hasInitialThumb ? '' : 'hidden'}" 
+                     alt="Live Stream">
+                <div id="thumb-placeholder-${d.device_id}" class="text-center p-4 ${hasInitialThumb ? 'hidden' : ''}">
                   <i class="fa-solid fa-video-slash text-2xl text-slate-600 mb-2"></i>
                   <p class="text-xs text-slate-500">스트림 대기 중...</p>
                 </div>
@@ -276,15 +281,15 @@
                 <div class="grid grid-cols-3 gap-2 text-center">
                   <div class="bg-slate-900/60 p-2 rounded-lg border border-slate-800">
                     <p class="text-[10px] text-slate-400 uppercase">속도</p>
-                    <p id="tel-speed-${d.device_id}" class="text-sm font-bold text-white font-mono">0 <span class="text-[10px] font-normal text-slate-400">km/h</span></p>
+                    <p id="tel-speed-${d.device_id}" class="text-sm font-bold text-white font-mono">${Math.round(d.latest_telemetry?.speed_kph || 0)} <span class="text-[10px] font-normal text-slate-400">km/h</span></p>
                   </div>
                   <div class="bg-slate-900/60 p-2 rounded-lg border border-slate-800">
                     <p class="text-[10px] text-slate-400 uppercase">조향각</p>
-                    <p id="tel-steer-${d.device_id}" class="text-sm font-bold text-white font-mono">0°</p>
+                    <p id="tel-steer-${d.device_id}" class="text-sm font-bold text-white font-mono">${(d.latest_telemetry?.steering_angle_deg || 0).toFixed(1)}°</p>
                   </div>
                   <div class="bg-slate-900/60 p-2 rounded-lg border border-slate-800">
                     <p class="text-[10px] text-slate-400 uppercase">브레이크</p>
-                    <p id="tel-brake-${d.device_id}" class="text-sm font-bold text-slate-400">OFF</p>
+                    <p id="tel-brake-${d.device_id}" class="text-sm font-bold ${d.latest_telemetry?.brake_pressed ? 'text-rose-400' : 'text-slate-400'}">${d.latest_telemetry?.brake_pressed ? 'ON' : 'OFF'}</p>
                   </div>
                 </div>
 
@@ -312,8 +317,9 @@
           if (data.type === 'thumbnail' && data.image_base64) {
             const imgEl = document.getElementById(`thumb-${deviceId}`);
             const placeholder = document.getElementById(`thumb-placeholder-${deviceId}`);
+            const mime = data.mime_type || (data.image_base64.startsWith('<svg') ? 'image/svg+xml' : 'image/jpeg');
             if (imgEl) {
-              imgEl.src = `data:image/jpeg;base64,${data.image_base64}`;
+              imgEl.src = `data:${mime};base64,${data.image_base64}`;
               imgEl.classList.remove('hidden');
               if (placeholder) placeholder.classList.add('hidden');
             }

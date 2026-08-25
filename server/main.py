@@ -47,6 +47,10 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.mount("/storage", StaticFiles(directory=str(BASE_DIR / "storage")), name="storage")
 
 
+# In-memory latest thumbnail & telemetry cache: device_id -> {image_base64, telemetry, timestamp}
+latest_thumbnails: dict[str, dict] = {}
+
+
 @app.on_event("startup")
 def startup_event():
     init_db()
@@ -69,12 +73,27 @@ class ConnectionHub:
             self.thumbnail_subscribers[device_id] = []
         self.thumbnail_subscribers[device_id].append(websocket)
 
+        # Immediately send the latest cached thumbnail on connect
+        if device_id in latest_thumbnails:
+            try:
+                cached_msg = json.dumps(latest_thumbnails[device_id])
+                await websocket.send_text(cached_msg)
+            except Exception:
+                pass
+
     def unsubscribe_thumbnail(self, device_id: str, websocket: WebSocket):
         if device_id in self.thumbnail_subscribers:
             if websocket in self.thumbnail_subscribers[device_id]:
                 self.thumbnail_subscribers[device_id].remove(websocket)
 
     async def broadcast_thumbnail(self, device_id: str, message: str):
+        # Cache latest thumbnail
+        try:
+            parsed = json.loads(message)
+            latest_thumbnails[device_id] = parsed
+        except Exception:
+            pass
+
         if device_id in self.thumbnail_subscribers:
             dead_sockets = []
             for ws in self.thumbnail_subscribers[device_id]:
@@ -142,7 +161,13 @@ def device_heartbeat(device_id: str, payload: dict):
 # 2. Devices List & Details
 @app.get("/api/v1/devices")
 def get_device_list():
-    return list_devices()
+    devices = list_devices()
+    for d in devices:
+        dev_id = d.get("device_id")
+        if dev_id in latest_thumbnails:
+            d["latest_thumbnail"] = latest_thumbnails[dev_id].get("image_base64")
+            d["latest_telemetry"] = latest_thumbnails[dev_id].get("telemetry")
+    return devices
 
 
 @app.get("/api/v1/devices/{device_id}")
@@ -150,10 +175,21 @@ def get_single_device(device_id: str):
     device = get_device(device_id)
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
+    if device_id in latest_thumbnails:
+        device["latest_thumbnail"] = latest_thumbnails[device_id].get("image_base64")
+        device["latest_telemetry"] = latest_thumbnails[device_id].get("telemetry")
     return device
 
 
-# 3. Update Device Config
+# 3. HTTP Fallback for Thumbnail Push
+@app.post("/api/v1/devices/{device_id}/thumbnail")
+async def post_thumbnail_http(device_id: str, payload: dict):
+    msg_str = json.dumps(payload)
+    await hub.broadcast_thumbnail(device_id, msg_str)
+    return {"status": "broadcasted"}
+
+
+# 4. Update Device Config
 @app.put("/api/v1/devices/{device_id}/config")
 def set_device_config(device_id: str, config_update: dict):
     result = update_device_config(device_id, config_update)
@@ -165,7 +201,7 @@ def set_device_config(device_id: str, config_update: dict):
     }
 
 
-# 4. Logs Ingestion & Query
+# 5. Logs Ingestion & Query
 @app.post("/api/v1/devices/{device_id}/logs")
 def ingest_logs(device_id: str, payload: dict):
     log_type = payload.get("log_type", "app")
@@ -180,7 +216,7 @@ def get_logs(device_id: str | None = None, level: str | None = None, limit: int 
     return list_logs(device_id, limit, level)
 
 
-# 5. Events Upload & Query
+# 6. Events Upload & Query
 @app.post("/api/v1/devices/{device_id}/events")
 async def upload_event(
     device_id: str,
@@ -196,14 +232,12 @@ async def upload_event(
     filename = f"{device_id}_{video_file.filename}"
     save_path = VIDEOS_DIR / filename
 
-    # Save video file
     with open(save_path, "wb") as buffer:
         shutil.copyfileobj(video_file.file, buffer)
 
     file_size = os.path.getsize(save_path)
     video_url = f"/storage/videos/{filename}"
 
-    # Save event to DB
     insert_event(
         event_id=event_id,
         device_id=device_id,
@@ -240,7 +274,6 @@ async def ws_thumbnail_ingest(websocket: WebSocket, device_id: str):
     try:
         while True:
             data = await websocket.receive_text()
-            # Broadcast to all web clients currently viewing this device
             await hub.broadcast_thumbnail(device_id, data)
     except WebSocketDisconnect:
         pass
