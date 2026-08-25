@@ -5,8 +5,8 @@ from common import BASEDIR
 from common.params import Params
 
 # --- Git Default Configurations (Edit here in repository) ---
-DEFAULT_SERVER_API_URL = "http://127.0.0.1:8000/api/v1"
-DEFAULT_SERVER_WS_URL = "ws://127.0.0.1:8000/ws/v1"
+DEFAULT_SERVER_API_URL = "http://192.168.200.14:8000/api/v1"
+DEFAULT_SERVER_WS_URL = "ws://192.168.200.14:8000/ws/v1"
 
 DEFAULT_HEARTBEAT_INTERVAL_SEC = 30
 DEFAULT_LOG_UPLOAD_INTERVAL_SEC = 30
