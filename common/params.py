@@ -1,7 +1,16 @@
 import os
 import datetime
 
-PARAMS_DIR = "/data/swing/params/d"
+def get_default_params_dir() -> str:
+    if os.getenv("PARAMS_DIR"):
+        return os.getenv("PARAMS_DIR")
+    if os.path.exists("/data") and os.access("/data", os.W_OK):
+        return "/data/swing/params/d"
+    # Fallback to local workspace directory
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base_dir, ".data", "params", "d")
+
+PARAMS_DIR = get_default_params_dir()
 
 class Params:
     def __init__(self):
