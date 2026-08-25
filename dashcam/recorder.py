@@ -59,8 +59,10 @@ class DashcamRecorder:
         try:
             self.vipc_client = VisionIpcClient("camerad", VisionStreamType.VISION_STREAM_ROAD, True)
             if self.vipc_client.connect(False):
-                self.width = self.vipc_client.width
-                self.height = self.vipc_client.height
+                # Ensure width and height are valid integers
+                if self.vipc_client.width and self.vipc_client.height:
+                    self.width = int(self.vipc_client.width)
+                    self.height = int(self.vipc_client.height)
                 cloudlog.info(f"Connected to VisionIPC camerad ({self.width}x{self.height})")
                 return True
         except Exception as e:
@@ -70,16 +72,27 @@ class DashcamRecorder:
 
     def get_frame(self):
         """Fetch frame from VisionIPC or generate a placeholder timestamp frame."""
+        w = int(self.width if self.width else DEFAULT_WIDTH)
+        h = int(self.height if self.height else DEFAULT_HEIGHT)
+
         if self.vipc_client and self.vipc_client.is_connected() and np is not None:
+            # Update width/height dynamically if became available
+            if self.vipc_client.width and self.vipc_client.height:
+                self.width = int(self.vipc_client.width)
+                self.height = int(self.vipc_client.height)
+                w, h = self.width, self.height
+
             buf = self.vipc_client.recv()
-            if buf is not None:
-                yuv = np.frombuffer(buf.data, dtype=np.uint8).reshape((self.height * 3 // 2, self.width))
-                if cv2 is not None:
+            if buf is not None and cv2 is not None:
+                try:
+                    yuv = np.frombuffer(buf.data, dtype=np.uint8).reshape((h * 3 // 2, w))
                     return cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR_NV12)
+                except Exception as e:
+                    cloudlog.debug(f"YUV convert error in recorder: {e}")
 
         # Fallback dummy frame with timestamp for simulation/headless mode
         if np is not None:
-            frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+            frame = np.zeros((h, w, 3), dtype=np.uint8)
             now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
             if cv2 is not None:
                 cv2.putText(frame, f"Dashcam Live [{now_str}]", (50, 80), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 2)
@@ -96,9 +109,12 @@ class DashcamRecorder:
         self.current_filename = os.path.join(NORMAL_DIR, f"{timestamp_str}.mp4")
         self.segment_start_time = time.monotonic()
 
+        w = int(self.width if self.width else DEFAULT_WIDTH)
+        h = int(self.height if self.height else DEFAULT_HEIGHT)
+
         if cv2 is not None:
             fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            self.current_writer = cv2.VideoWriter(self.current_filename, fourcc, RECORDING_FPS, (self.width, self.height))
+            self.current_writer = cv2.VideoWriter(self.current_filename, fourcc, RECORDING_FPS, (w, h))
             cloudlog.info(f"Started new dashcam segment: {self.current_filename}")
         else:
             cloudlog.warning("OpenCV (cv2) not available; video recording is running in mock mode")
@@ -106,7 +122,6 @@ class DashcamRecorder:
     def handle_event_trigger(self):
         """Copies current and previous video segments to events/pending when triggered."""
         if not self.params.get_bool("TriggerEvent"):
-            # Check G-sensor or external threshold params
             return
 
         self.params.put_bool("TriggerEvent", False)
@@ -191,4 +206,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

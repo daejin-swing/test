@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
     .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.1); }
+    .pip-box { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
   </style>
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen">
@@ -20,7 +21,7 @@
       </div>
       <div>
         <h1 class="text-xl font-bold tracking-tight text-white">Fleet Vision Control</h1>
-        <p class="text-xs text-slate-400">Connected Dashcam & OTA Remote Management</p>
+        <p class="text-xs text-slate-400">Connected Dashcam & Dual-Cam Live Telemetry</p>
       </div>
     </div>
     <div class="flex items-center space-x-4">
@@ -28,10 +29,10 @@
         <i class="fa-solid fa-gauge mr-1"></i> 대시보드
       </a>
       <a href="/static/events.html" class="px-3 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800">
-        <i class="fa-solid fa-video mr-1"></i> 이벤트 영상
+        <i class="fa-solid fa-video mr-1"></i> 전체 이벤트 영상
       </a>
       <a href="/static/logs.html" class="px-3 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800">
-        <i class="fa-solid fa-terminal mr-1"></i> 시스템 로그
+        <i class="fa-solid fa-terminal mr-1"></i> 전체 시스템 로그
       </a>
       <button onclick="fetchDevices()" class="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800" title="새로고침">
         <i class="fa-solid fa-rotate"></i>
@@ -65,7 +66,7 @@
       <div class="glass p-5 rounded-2xl">
         <div class="flex items-center justify-between">
           <div>
-            <p class="text-xs font-semibold uppercase tracking-wider text-slate-400">실시간 스트리밍</p>
+            <p class="text-xs font-semibold uppercase tracking-wider text-slate-400">듀얼 스트리밍 활성</p>
             <h3 id="stat-streaming" class="text-2xl font-bold text-indigo-400 mt-1">0</h3>
           </div>
           <div class="p-3 bg-indigo-500/10 text-indigo-400 rounded-xl"><i class="fa-solid fa-tower-broadcast text-xl"></i></div>
@@ -85,15 +86,86 @@
     <!-- Device List Grid -->
     <div class="flex items-center justify-between mb-4">
       <h2 class="text-lg font-bold text-white flex items-center">
-        <i class="fa-solid fa-microchip mr-2 text-indigo-400"></i> 연결된 디바이스 목록
+        <i class="fa-solid fa-microchip mr-2 text-indigo-400"></i> 연결된 디바이스 목록 (Dual-Camera & Telemetry)
       </h2>
-      <span class="text-xs text-slate-400">실시간 썸네일 스트림 갱신 중</span>
+      <span class="text-xs text-slate-400">1 FPS Dual-Cam Live Sync</span>
     </div>
 
-    <div id="device-grid" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <div id="device-grid" class="grid grid-cols-1 gap-8">
       <!-- Device Cards will be dynamically inserted here -->
     </div>
   </main>
+
+  <!-- High-Res Live Streaming Modal with PiP (Dual-Cam) -->
+  <div id="live-modal" class="fixed inset-0 bg-black/85 backdrop-blur-md z-50 hidden flex items-center justify-center p-4">
+    <div class="glass w-full max-w-5xl rounded-2xl p-6 border border-slate-700 shadow-2xl flex flex-col">
+      <div class="flex justify-between items-center pb-4 border-b border-slate-800 mb-4">
+        <div class="flex items-center space-x-3">
+          <span class="px-2 py-0.5 rounded text-[11px] font-bold uppercase bg-rose-500/20 text-rose-400 border border-rose-500/40 flex items-center">
+            <span class="w-2 h-2 rounded-full bg-rose-500 mr-1.5 animate-pulse"></span> HIGH-RES LIVE
+          </span>
+          <h3 id="live-modal-title" class="text-base font-bold text-white">디바이스 고화질 듀얼 스트림</h3>
+        </div>
+
+        <!-- Camera Switch Radio Buttons -->
+        <div class="flex items-center space-x-4 bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-800 text-xs">
+          <span class="text-slate-400 font-semibold">메인 화면 선택:</span>
+          <label class="flex items-center space-x-1.5 cursor-pointer text-slate-200">
+            <input type="radio" name="main-cam-select" value="road" checked onchange="switchMainCamera('road')" class="text-indigo-600 focus:ring-0">
+            <span>전방 메인 (Road)</span>
+          </label>
+          <label class="flex items-center space-x-1.5 cursor-pointer text-slate-200">
+            <input type="radio" name="main-cam-select" value="wide" onchange="switchMainCamera('wide')" class="text-indigo-600 focus:ring-0">
+            <span>전방 광각 (Wide)</span>
+          </label>
+        </div>
+
+        <button onclick="closeLiveModal()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-xl"></i></button>
+      </div>
+
+      <!-- Main Video Container with PiP Overlay -->
+      <div class="relative bg-black rounded-xl overflow-hidden aspect-video border border-slate-800 flex items-center justify-center">
+        <!-- Main Large Screen -->
+        <img id="live-main-img" class="w-full h-full object-contain" alt="Main Stream">
+
+        <!-- Main Screen Label -->
+        <div id="live-main-badge" class="absolute top-3 left-3 px-3 py-1 rounded-md bg-black/70 backdrop-blur-sm text-xs font-mono text-white border border-slate-700">
+          MAIN: ROAD CAM
+        </div>
+
+        <!-- PiP (Picture in Picture) Small Screen Overlay -->
+        <div onclick="togglePipCamera()" class="pip-box absolute bottom-4 right-4 w-64 aspect-video rounded-lg overflow-hidden border-2 border-indigo-500/80 shadow-2xl bg-slate-900 cursor-pointer hover:scale-105 group" title="클릭하여 메인 화면과 전환">
+          <img id="live-pip-img" class="w-full h-full object-cover" alt="PiP Stream">
+          <div id="live-pip-badge" class="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/80 text-[10px] font-mono text-indigo-300">
+            PiP: WIDE CAM (클릭 시 전환)
+          </div>
+          <div class="absolute inset-0 bg-indigo-500/10 opacity-0 group-hover:opacity-100 transition flex items-center justify-center text-white text-xs font-bold">
+            <i class="fa-solid fa-arrows-rotate mr-1"></i> 화면 전환
+          </div>
+        </div>
+      </div>
+
+      <!-- Live Telemetry HUD Bar -->
+      <div class="mt-4 grid grid-cols-4 gap-3">
+        <div class="bg-slate-900/60 p-2.5 rounded-xl border border-slate-800 text-center">
+          <span class="text-[10px] text-slate-400 uppercase">차량 속도</span>
+          <p id="live-tel-speed" class="text-lg font-bold text-white font-mono">0 km/h</p>
+        </div>
+        <div class="bg-slate-900/60 p-2.5 rounded-xl border border-slate-800 text-center">
+          <span class="text-[10px] text-slate-400 uppercase">조향각</span>
+          <p id="live-tel-steer" class="text-lg font-bold text-white font-mono">0.0°</p>
+        </div>
+        <div class="bg-slate-900/60 p-2.5 rounded-xl border border-slate-800 text-center">
+          <span class="text-[10px] text-slate-400 uppercase">브레이크</span>
+          <p id="live-tel-brake" class="text-lg font-bold text-slate-400 font-mono">OFF</p>
+        </div>
+        <div class="bg-slate-900/60 p-2.5 rounded-xl border border-slate-800 text-center">
+          <span class="text-[10px] text-slate-400 uppercase">기어</span>
+          <p id="live-tel-gear" class="text-lg font-bold text-indigo-400 font-mono">D</p>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- Config Edit Modal -->
   <div id="config-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
@@ -111,7 +183,6 @@
         <div>
           <label class="block text-xs font-semibold text-slate-300 mb-1">타겟 Git 브랜치 (OTA Target Branch)</label>
           <input type="text" id="cfg-target-branch" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
-          <p class="text-xs text-slate-500 mt-1">기기가 다음 Heartbeat 시 이 브랜치로 자동 전환합니다.</p>
         </div>
 
         <div class="grid grid-cols-2 gap-4">
@@ -146,6 +217,9 @@
 
   <script>
     let activeWebSockets = {};
+    let currentLiveDeviceId = null;
+    let mainCameraType = 'road'; // 'road' or 'wide'
+    let currentLiveFrames = { road: '', wide: '' };
 
     async function fetchDevices() {
       try {
@@ -189,78 +263,99 @@
         const sys = d.system_status || {};
         const cfg = d.config_json || {};
         const isOnline = d.last_heartbeat_at && ((new Date() - new Date(d.last_heartbeat_at)) / 1000 < 90);
-        const hasInitialThumb = !!d.latest_thumbnail;
-        const initialMime = d.latest_thumbnail && d.latest_thumbnail.startsWith('<svg') ? 'image/svg+xml' : 'image/jpeg';
 
         return `
-          <div class="glass rounded-2xl overflow-hidden border border-slate-800 shadow-xl flex flex-col">
+          <div class="glass rounded-2xl overflow-hidden border border-slate-800 shadow-2xl flex flex-col">
+            
             <!-- Card Header -->
             <div class="p-5 bg-slate-900/60 border-b border-slate-800/80 flex items-center justify-between">
               <div class="flex items-center space-x-3">
-                <span class="relative flex h-3 w-3">
+                <span class="relative flex h-3.5 w-3.5">
                   ${isOnline ? `
                     <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span class="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                    <span class="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-500"></span>
                   ` : `
-                    <span class="relative inline-flex rounded-full h-3 w-3 bg-slate-500"></span>
+                    <span class="relative inline-flex rounded-full h-3.5 w-3.5 bg-slate-500"></span>
                   `}
                 </span>
                 <div>
-                  <h3 class="font-bold text-white tracking-wide">${d.device_id}</h3>
-                  <p class="text-xs text-slate-400">IP: ${sys.ip_address || '127.0.0.1'} | Ver: ${d.current_version || '0.0.1'}</p>
+                  <div class="flex items-center space-x-2">
+                    <h3 class="font-bold text-white text-base tracking-wide">${d.device_id}</h3>
+                    <span class="px-2 py-0.5 rounded text-[10px] font-mono ${isOnline ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800 text-slate-400'}">
+                      ${isOnline ? 'ONLINE' : 'OFFLINE'}
+                    </span>
+                  </div>
+                  <p class="text-xs text-slate-400 mt-0.5">IP: ${sys.ip_address || '127.0.0.1'} | 버전: ${d.current_version || '0.0.1'} | 타겟: <span class="text-amber-400 font-mono">${d.target_branch || 'master'}</span></p>
                 </div>
               </div>
+
+              <!-- Device Specific Actions -->
               <div class="flex items-center space-x-2">
-                <button onclick="openConfigModal('${d.device_id}')" class="px-3 py-1.5 text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg border border-slate-700">
-                  <i class="fa-solid fa-gear mr-1"></i> 설정
+                <a href="/static/events.html?device_id=${d.device_id}" class="px-3 py-1.5 text-xs font-medium bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 rounded-lg border border-amber-500/30 flex items-center">
+                  <i class="fa-solid fa-film mr-1.5"></i> 이벤트 영상
+                </a>
+                <a href="/static/logs.html?device_id=${d.device_id}" class="px-3 py-1.5 text-xs font-medium bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 rounded-lg border border-indigo-500/30 flex items-center">
+                  <i class="fa-solid fa-terminal mr-1.5"></i> 시스템 로그
+                </a>
+                <button onclick="openConfigModal('${d.device_id}')" class="px-3 py-1.5 text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg border border-slate-700 flex items-center">
+                  <i class="fa-solid fa-gear mr-1.5"></i> 설정
                 </button>
               </div>
             </div>
 
-            <!-- Card Body: Video View & Telemetry -->
-            <div class="p-5 grid grid-cols-1 md:grid-cols-2 gap-4 flex-1">
+            <!-- Card Body: Dual-Camera Stream Grid & Telemetry -->
+            <div class="p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
               
-              <!-- 1-FPS Live Thumbnail Stream -->
-              <div class="relative bg-slate-950 rounded-xl overflow-hidden aspect-video border border-slate-800 flex items-center justify-center group">
-                <img id="thumb-${d.device_id}" 
-                     src="${hasInitialThumb ? `data:${initialMime};base64,${d.latest_thumbnail}` : ''}" 
-                     class="w-full h-full object-cover ${hasInitialThumb ? '' : 'hidden'}" 
-                     alt="Live Stream">
-                <div id="thumb-placeholder-${d.device_id}" class="text-center p-4 ${hasInitialThumb ? 'hidden' : ''}">
-                  <i class="fa-solid fa-video-slash text-2xl text-slate-600 mb-2"></i>
-                  <p class="text-xs text-slate-500">스트림 대기 중...</p>
-                </div>
+              <!-- Dual-Camera View (8 cols) -->
+              <div class="lg:col-span-8 grid grid-cols-1 md:grid-cols-2 gap-4">
                 
-                <div class="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/60 backdrop-blur-sm text-[10px] font-mono text-emerald-400 border border-emerald-500/30 flex items-center">
-                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></span> 1 FPS LIVE
+                <!-- 1. Road Camera (Main) -->
+                <div class="relative bg-slate-950 rounded-xl overflow-hidden aspect-video border border-slate-800 flex items-center justify-center group shadow-lg">
+                  <img id="thumb-road-${d.device_id}" class="w-full h-full object-cover hidden" alt="Road Cam">
+                  <div id="thumb-placeholder-road-${d.device_id}" class="text-center p-4">
+                    <i class="fa-solid fa-road text-2xl text-slate-600 mb-2"></i>
+                    <p class="text-xs text-slate-500">Road 카메라 대기 중...</p>
+                  </div>
+                  <div class="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/70 backdrop-blur-sm text-[10px] font-mono text-cyan-400 border border-cyan-500/30 flex items-center">
+                    <span class="w-1.5 h-1.5 rounded-full bg-cyan-400 mr-1.5 animate-pulse"></span> ROAD CAM (전방 메인)
+                  </div>
                 </div>
 
-                <div class="absolute bottom-2 right-2">
-                  <button onclick="requestHighResLive('${d.device_id}')" class="px-2.5 py-1 text-xs bg-indigo-600 hover:bg-indigo-500 text-white rounded-md shadow-md opacity-90 group-hover:opacity-100 transition">
-                    <i class="fa-solid fa-expand mr-1"></i> 고화질 전환
-                  </button>
+                <!-- 2. Wide Road Camera -->
+                <div class="relative bg-slate-950 rounded-xl overflow-hidden aspect-video border border-slate-800 flex items-center justify-center group shadow-lg">
+                  <img id="thumb-wide-${d.device_id}" class="w-full h-full object-cover hidden" alt="Wide Cam">
+                  <div id="thumb-placeholder-wide-${d.device_id}" class="text-center p-4">
+                    <i class="fa-solid fa-eye text-2xl text-slate-600 mb-2"></i>
+                    <p class="text-xs text-slate-500">Wide 카메라 대기 중...</p>
+                  </div>
+                  <div class="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/70 backdrop-blur-sm text-[10px] font-mono text-purple-400 border border-purple-500/30 flex items-center">
+                    <span class="w-1.5 h-1.5 rounded-full bg-purple-400 mr-1.5 animate-pulse"></span> WIDE CAM (전방 광각)
+                  </div>
                 </div>
+
               </div>
 
-              <!-- Software & Metrics Details -->
-              <div class="flex flex-col justify-between text-xs space-y-3">
-                <div class="space-y-2 bg-slate-900/40 p-3 rounded-xl border border-slate-800">
-                  <div class="flex justify-between">
-                    <span class="text-slate-400">현재 브랜치:</span>
-                    <span class="font-mono text-indigo-300 font-semibold">${d.current_branch || 'master'}</span>
+              <!-- Telemetry HUD & Status Panel (4 cols) -->
+              <div class="lg:col-span-4 flex flex-col justify-between space-y-4">
+                
+                <!-- Telemetry HUD -->
+                <div class="grid grid-cols-3 gap-2 text-center">
+                  <div class="bg-slate-900/60 p-2.5 rounded-xl border border-slate-800">
+                    <p class="text-[10px] text-slate-400 uppercase font-semibold">속도</p>
+                    <p id="tel-speed-${d.device_id}" class="text-base font-bold text-white font-mono">0 <span class="text-[10px] font-normal text-slate-400">km/h</span></p>
                   </div>
-                  <div class="flex justify-between">
-                    <span class="text-slate-400">타겟 브랜치:</span>
-                    <span class="font-mono text-amber-300 font-semibold">${d.target_branch || 'master'}</span>
+                  <div class="bg-slate-900/60 p-2.5 rounded-xl border border-slate-800">
+                    <p class="text-[10px] text-slate-400 uppercase font-semibold">조향각</p>
+                    <p id="tel-steer-${d.device_id}" class="text-base font-bold text-white font-mono">0.0°</p>
                   </div>
-                  <div class="flex justify-between">
-                    <span class="text-slate-400">최신 커밋:</span>
-                    <span class="font-mono text-slate-300">${(d.git_commit || '').substring(0, 7) || 'N/A'}</span>
+                  <div class="bg-slate-900/60 p-2.5 rounded-xl border border-slate-800">
+                    <p class="text-[10px] text-slate-400 uppercase font-semibold">브레이크</p>
+                    <p id="tel-brake-${d.device_id}" class="text-base font-bold text-slate-400 font-mono">OFF</p>
                   </div>
                 </div>
 
                 <!-- System Resources -->
-                <div class="space-y-2 bg-slate-900/40 p-3 rounded-xl border border-slate-800">
+                <div class="bg-slate-900/40 p-3.5 rounded-xl border border-slate-800 text-xs space-y-2.5">
                   <div>
                     <div class="flex justify-between mb-1 text-[11px]">
                       <span class="text-slate-400">디스크 여유 공간:</span>
@@ -270,28 +365,20 @@
                       <div class="bg-indigo-500 h-1.5 rounded-full" style="width: ${((sys.disk_free_gb || 1)/(sys.disk_total_gb || 1))*100}%"></div>
                     </div>
                   </div>
-
                   <div class="flex justify-between text-[11px]">
-                    <span class="text-slate-400">기기 온도:</span>
-                    <span class="text-amber-400 font-semibold">${sys.temperature_c || 0} °C</span>
+                    <span class="text-slate-400">기기 온도 / CPU:</span>
+                    <span class="text-amber-400 font-semibold">${sys.temperature_c || 0} °C / ${sys.cpu_usage_pct || 0}%</span>
+                  </div>
+                  <div class="flex justify-between text-[11px]">
+                    <span class="text-slate-400">현재 브랜치:</span>
+                    <span class="font-mono text-indigo-300 font-semibold">${d.current_branch || 'master'} (${(d.git_commit || '').substring(0, 7)})</span>
                   </div>
                 </div>
 
-                <!-- Realtime Telemetry HUD -->
-                <div class="grid grid-cols-3 gap-2 text-center">
-                  <div class="bg-slate-900/60 p-2 rounded-lg border border-slate-800">
-                    <p class="text-[10px] text-slate-400 uppercase">속도</p>
-                    <p id="tel-speed-${d.device_id}" class="text-sm font-bold text-white font-mono">${Math.round(d.latest_telemetry?.speed_kph || 0)} <span class="text-[10px] font-normal text-slate-400">km/h</span></p>
-                  </div>
-                  <div class="bg-slate-900/60 p-2 rounded-lg border border-slate-800">
-                    <p class="text-[10px] text-slate-400 uppercase">조향각</p>
-                    <p id="tel-steer-${d.device_id}" class="text-sm font-bold text-white font-mono">${(d.latest_telemetry?.steering_angle_deg || 0).toFixed(1)}°</p>
-                  </div>
-                  <div class="bg-slate-900/60 p-2 rounded-lg border border-slate-800">
-                    <p class="text-[10px] text-slate-400 uppercase">브레이크</p>
-                    <p id="tel-brake-${d.device_id}" class="text-sm font-bold ${d.latest_telemetry?.brake_pressed ? 'text-rose-400' : 'text-slate-400'}">${d.latest_telemetry?.brake_pressed ? 'ON' : 'OFF'}</p>
-                  </div>
-                </div>
+                <!-- High-Res Stream Trigger Button -->
+                <button onclick="openLiveModal('${d.device_id}')" class="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-indigo-600/30 flex items-center justify-center transition">
+                  <i class="fa-solid fa-expand mr-2"></i> 고화질 듀얼 라이브 뷰어 (PiP)
+                </button>
 
               </div>
 
@@ -300,7 +387,7 @@
         `;
       }).join('');
 
-      // Connect WebSockets for thumbnails
+      // Connect WebSockets for each device
       devices.forEach(d => setupThumbnailWebSocket(d.device_id));
     }
 
@@ -314,17 +401,31 @@
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          if (data.type === 'thumbnail' && data.image_base64) {
-            const imgEl = document.getElementById(`thumb-${deviceId}`);
-            const placeholder = document.getElementById(`thumb-placeholder-${deviceId}`);
-            const mime = data.mime_type || (data.image_base64.startsWith('<svg') ? 'image/svg+xml' : 'image/jpeg');
-            if (imgEl) {
-              imgEl.src = `data:${mime};base64,${data.image_base64}`;
-              imgEl.classList.remove('hidden');
-              if (placeholder) placeholder.classList.add('hidden');
+          if (data.type === 'thumbnail') {
+            const roadImg = document.getElementById(`thumb-road-${deviceId}`);
+            const roadPh = document.getElementById(`thumb-placeholder-road-${deviceId}`);
+            const wideImg = document.getElementById(`thumb-wide-${deviceId}`);
+            const widePh = document.getElementById(`thumb-placeholder-wide-${deviceId}`);
+
+            // 1. Road Camera Frame
+            const roadSrc = data.image_road_base64 || data.image_base64;
+            if (roadImg && roadSrc) {
+              const mime = roadSrc.startsWith('<svg') ? 'image/svg+xml' : 'image/jpeg';
+              roadImg.src = `data:${mime};base64,${roadSrc}`;
+              roadImg.classList.remove('hidden');
+              if (roadPh) roadPh.classList.add('hidden');
             }
 
-            // Update Telemetry
+            // 2. Wide Road Camera Frame
+            const wideSrc = data.image_wide_base64 || data.image_base64;
+            if (wideImg && wideSrc) {
+              const mime = wideSrc.startsWith('<svg') ? 'image/svg+xml' : 'image/jpeg';
+              wideImg.src = `data:${mime};base64,${wideSrc}`;
+              wideImg.classList.remove('hidden');
+              if (widePh) widePh.classList.add('hidden');
+            }
+
+            // 3. Telemetry Update
             if (data.telemetry) {
               const tel = data.telemetry;
               const spd = document.getElementById(`tel-speed-${deviceId}`);
@@ -334,7 +435,12 @@
               if (str) str.innerText = `${(tel.steering_angle_deg || 0).toFixed(1)}°`;
               if (brk) {
                 brk.innerText = tel.brake_pressed ? 'ON' : 'OFF';
-                brk.className = tel.brake_pressed ? 'text-sm font-bold text-rose-400' : 'text-sm font-bold text-slate-400';
+                brk.className = tel.brake_pressed ? 'text-base font-bold text-rose-400' : 'text-base font-bold text-slate-400';
+              }
+
+              // Also update live modal if currently open for this device
+              if (currentLiveDeviceId === deviceId) {
+                updateLiveModalFrames(roadSrc, wideSrc, tel);
               }
             }
           }
@@ -349,6 +455,88 @@
       };
 
       activeWebSockets[deviceId] = ws;
+    }
+
+    // High-Res Live Modal & PiP Management
+    function openLiveModal(deviceId) {
+      currentLiveDeviceId = deviceId;
+      document.getElementById('live-modal-title').innerText = `[${deviceId}] 고화질 듀얼 카메라 라이브`;
+      document.getElementById('live-modal').classList.remove('hidden');
+
+      // Send WebSocket start_live signaling request to device
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${wsProtocol}//${window.location.host}/ws/v1/webrtc/signaling/${deviceId}`;
+      const sigWs = new WebSocket(wsUrl);
+      sigWs.onopen = () => {
+        sigWs.send(JSON.stringify({ action: "start_live", device_id: deviceId }));
+        setTimeout(() => sigWs.close(), 1000);
+      };
+    }
+
+    function closeLiveModal() {
+      if (currentLiveDeviceId) {
+        // Send stop_live request
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${wsProtocol}//${window.location.host}/ws/v1/webrtc/signaling/${currentLiveDeviceId}`;
+        const sigWs = new WebSocket(wsUrl);
+        sigWs.onopen = () => {
+          sigWs.send(JSON.stringify({ action: "stop_live", device_id: currentLiveDeviceId }));
+          setTimeout(() => sigWs.close(), 1000);
+        };
+      }
+      currentLiveDeviceId = null;
+      document.getElementById('live-modal').classList.add('hidden');
+    }
+
+    function switchMainCamera(type) {
+      mainCameraType = type;
+      updateLiveModalRender();
+    }
+
+    function togglePipCamera() {
+      mainCameraType = (mainCameraType === 'road') ? 'wide' : 'road';
+      const radios = document.getElementsByName('main-cam-select');
+      radios.forEach(r => { r.checked = (r.value === mainCameraType); });
+      updateLiveModalRender();
+    }
+
+    function updateLiveModalFrames(roadB64, wideB64, tel) {
+      currentLiveFrames.road = roadB64;
+      currentLiveFrames.wide = wideB64;
+      updateLiveModalRender();
+
+      // Telemetry
+      if (tel) {
+        document.getElementById('live-tel-speed').innerText = `${Math.round(tel.speed_kph || 0)} km/h`;
+        document.getElementById('live-tel-steer').innerText = `${(tel.steering_angle_deg || 0).toFixed(1)}°`;
+        const brk = document.getElementById('live-tel-brake');
+        brk.innerText = tel.brake_pressed ? 'ON' : 'OFF';
+        brk.className = tel.brake_pressed ? 'text-lg font-bold text-rose-400 font-mono' : 'text-lg font-bold text-slate-400 font-mono';
+        document.getElementById('live-tel-gear').innerText = tel.gear || 'D';
+      }
+    }
+
+    function updateLiveModalRender() {
+      const mainImg = document.getElementById('live-main-img');
+      const pipImg = document.getElementById('live-pip-img');
+      const mainBadge = document.getElementById('live-main-badge');
+      const pipBadge = document.getElementById('live-pip-badge');
+
+      const isRoadMain = (mainCameraType === 'road');
+      const mainSrc = isRoadMain ? currentLiveFrames.road : currentLiveFrames.wide;
+      const pipSrc = isRoadMain ? currentLiveFrames.wide : currentLiveFrames.road;
+
+      if (mainSrc) {
+        const mime = mainSrc.startsWith('<svg') ? 'image/svg+xml' : 'image/jpeg';
+        mainImg.src = `data:${mime};base64,${mainSrc}`;
+      }
+      if (pipSrc) {
+        const mime = pipSrc.startsWith('<svg') ? 'image/svg+xml' : 'image/jpeg';
+        pipImg.src = `data:${mime};base64,${pipSrc}`;
+      }
+
+      mainBadge.innerText = isRoadMain ? 'MAIN: ROAD CAM (전방 메인)' : 'MAIN: WIDE CAM (전방 광각)';
+      pipBadge.innerText = isRoadMain ? 'PiP: WIDE (클릭 시 전환)' : 'PiP: ROAD (클릭 시 전환)';
     }
 
     // Modal Operations
@@ -382,16 +570,9 @@
 
       const payload = {
         target_branch: targetBranch,
-        storage: {
-          min_free_bytes_gb: minFreeGb,
-          event_max_files: eventMaxFiles,
-        },
-        stream: {
-          thumbnail_fps: thumbnailFps,
-        },
-        event_trigger: {
-          g_sensor_threshold: gSensor,
-        }
+        storage: { min_free_bytes_gb: minFreeGb, event_max_files: eventMaxFiles },
+        stream: { thumbnail_fps: thumbnailFps },
+        event_trigger: { g_sensor_threshold: gSensor },
       };
 
       try {
@@ -401,25 +582,13 @@
           body: JSON.stringify(payload)
         });
         if (res.ok) {
-          alert('원격 설정이 성공적으로 저장되었습니다. 다음 Heartbeat 시 기기에 적용됩니다.');
+          alert('원격 설정이 저장되었습니다. 다음 Heartbeat 시 기기에 적용됩니다.');
           closeConfigModal();
           fetchDevices();
         }
       } catch (err) {
         alert('설정 저장 실패: ' + err);
       }
-    }
-
-    function requestHighResLive(deviceId) {
-      alert(`[${deviceId}] 고화질 실시간 스트리밍 시그널링 요청을 전송했습니다.`);
-      // Send WebSocket start_live signaling message
-      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${wsProtocol}//${window.location.host}/ws/v1/webrtc/signaling/${deviceId}`;
-      const sigWs = new WebSocket(wsUrl);
-      sigWs.onopen = () => {
-        sigWs.send(JSON.stringify({ action: "start_live", device_id: deviceId }));
-        setTimeout(() => sigWs.close(), 1000);
-      };
     }
 
     // Initial Fetch & Periodic Auto-refresh

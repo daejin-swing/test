@@ -28,7 +28,7 @@
         <i class="fa-solid fa-gauge mr-1"></i> 대시보드
       </a>
       <a href="/static/events.html" class="px-3 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800">
-        <i class="fa-solid fa-video mr-1"></i> 이벤트 영상
+        <i class="fa-solid fa-video mr-1"></i> 전체 이벤트 영상
       </a>
       <a href="/static/logs.html" class="px-3 py-2 rounded-md text-sm font-medium bg-indigo-600/20 text-indigo-400 border border-indigo-500/30">
         <i class="fa-solid fa-terminal mr-1"></i> 시스템 로그
@@ -38,20 +38,31 @@
 
   <!-- Main Log List -->
   <main class="max-w-7xl mx-auto px-6 py-8">
-    <div class="flex items-center justify-between mb-6">
+    
+    <!-- Filter Bar -->
+    <div class="glass p-4 rounded-2xl mb-6 flex flex-wrap items-center justify-between gap-4">
       <div class="flex items-center space-x-3">
-        <select id="level-filter" onchange="fetchLogs()" class="bg-slate-900 border border-slate-700 text-xs rounded-lg px-3 py-2 text-slate-200">
+        <span class="text-xs font-semibold text-slate-400">디바이스 필터:</span>
+        <select id="device-select" onchange="onDeviceChange()" class="bg-slate-900 border border-slate-700 text-xs font-medium rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+          <option value="">전체 디바이스 보기</option>
+        </select>
+
+        <span class="text-xs font-semibold text-slate-400 ml-2">로그 레벨:</span>
+        <select id="level-filter" onchange="fetchLogs()" class="bg-slate-900 border border-slate-700 text-xs font-medium rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
           <option value="">모든 레벨</option>
           <option value="CRITICAL">CRITICAL (크래시)</option>
           <option value="ERROR">ERROR</option>
           <option value="WARNING">WARNING</option>
           <option value="INFO">INFO</option>
         </select>
+      </div>
+
+      <div class="flex items-center space-x-3">
+        <span id="log-count" class="text-xs text-slate-400 font-mono">0개의 로그</span>
         <button onclick="fetchLogs()" class="px-3 py-2 text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg border border-slate-700">
           <i class="fa-solid fa-rotate mr-1"></i> 새로고침
         </button>
       </div>
-      <span id="log-count" class="text-xs text-slate-400 font-mono">0개의 로그</span>
     </div>
 
     <div id="logs-container" class="space-y-3">
@@ -60,9 +71,35 @@
   </main>
 
   <script>
+    // Read ?device_id= from URL
+    const urlParams = new URLSearchParams(window.location.search);
+    let selectedDeviceId = urlParams.get('device_id') || '';
+
+    async function initDeviceDropdown() {
+      try {
+        const res = await fetch('/api/v1/devices');
+        const devices = await res.json();
+        const select = document.getElementById('device-select');
+        select.innerHTML = '<option value="">전체 디바이스 보기</option>' + 
+          devices.map(d => `<option value="${d.device_id}" ${d.device_id === selectedDeviceId ? 'selected' : ''}>${d.device_id}</option>`).join('');
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    function onDeviceChange() {
+      selectedDeviceId = document.getElementById('device-select').value;
+      const newUrl = selectedDeviceId ? `${window.location.pathname}?device_id=${selectedDeviceId}` : window.location.pathname;
+      window.history.pushState({}, '', newUrl);
+      fetchLogs();
+    }
+
     async function fetchLogs() {
       const level = document.getElementById('level-filter').value;
-      const url = level ? `/api/v1/logs?level=${level}` : '/api/v1/logs';
+      let url = '/api/v1/logs?';
+      if (selectedDeviceId) url += `device_id=${selectedDeviceId}&`;
+      if (level) url += `level=${level}&`;
+
       try {
         const res = await fetch(url);
         const logs = await res.json();
@@ -79,7 +116,7 @@
         container.innerHTML = `
           <div class="glass p-12 text-center rounded-2xl">
             <i class="fa-solid fa-circle-check text-4xl text-emerald-500 mb-3"></i>
-            <p class="text-slate-400">조건에 맞는 로그가 없습니다.</p>
+            <p class="text-slate-400">${selectedDeviceId ? `[${selectedDeviceId}] 기기에` : ''} 조건에 맞는 로그가 없습니다.</p>
           </div>
         `;
         return;
@@ -99,7 +136,7 @@
                 <span class="px-2 py-0.5 rounded text-[10px] font-bold border font-mono ${badgeColor}">
                   ${l.level}
                 </span>
-                <span class="text-xs font-bold text-indigo-400">${l.device_id}</span>
+                <a href="/static/logs.html?device_id=${l.device_id}" class="text-xs font-bold text-indigo-400 hover:underline">${l.device_id}</a>
                 <span class="text-xs text-slate-500 font-mono">(${l.module || 'app'})</span>
               </div>
               <span class="text-[11px] text-slate-500 font-mono">${(l.created_at || '').replace('T', ' ').substring(0, 19)}</span>
@@ -118,6 +155,7 @@
       }).join('');
     }
 
+    initDeviceDropdown();
     fetchLogs();
     setInterval(fetchLogs, 15000);
   </script>
