@@ -5,3 +5,4 @@ zxing-cpp  # zxingcpp, used by ui/camera_feed.py's detect_qr() -- self-contained
            # wheel, no system libzbar needed, and reads stylized/dense QR
            # codes (e.g. phone wifi-share codes) far better than cv2's
            # built-in QRCodeDetector did.
+websockets
