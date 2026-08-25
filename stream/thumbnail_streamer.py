@@ -106,20 +106,28 @@ class DualThumbnailStreamer:
             self.vipc_wide = None
 
     def encode_single_stream(self, vipc_client, label: str, default_w: int, default_h: int) -> tuple[str, str]:
-        """Encodes one camera stream to base64."""
+        """Encodes one camera stream to base64 with dynamic buffer resolution handling."""
         w = default_w
         h = default_h
         frame = None
 
         if vipc_client and vipc_client.is_connected() and np is not None:
-            if vipc_client.width and vipc_client.height:
-                w = int(vipc_client.width)
-                h = int(vipc_client.height)
             buf = vipc_client.recv()
             if buf is not None and cv2 is not None:
+                # Read actual buffer metadata directly
+                buf_w = getattr(buf, "width", None) or vipc_client.width or w
+                buf_h = getattr(buf, "height", None) or vipc_client.height or h
+                buf_stride = getattr(buf, "stride", None) or buf_w
+
+                w, h = int(buf_w), int(buf_h)
+                stride = int(buf_stride)
+
                 try:
-                    yuv = np.frombuffer(buf.data, dtype=np.uint8).reshape((h * 3 // 2, w))
-                    frame = cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR_NV12)
+                    yuv = np.frombuffer(buf.data, dtype=np.uint8).reshape((h * 3 // 2, stride))
+                    bgr = cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR_NV12)
+                    if stride > w:
+                        bgr = bgr[:, :w]
+                    frame = bgr
                 except Exception as e:
                     cloudlog.debug(f"YUV convert error for {label}: {e}")
 
@@ -133,7 +141,7 @@ class DualThumbnailStreamer:
         if frame is None and cv2 is not None and np is not None:
             frame = np.zeros((180, 320, 3), dtype=np.uint8)
             now_str = datetime.now().strftime("%H:%M:%S")
-            color = (0, 200, 255) if label == "ROAD" else (255, 100, 200)
+            color = (0, 200, 255) if label.startswith("ROAD") else (255, 100, 200)
             cv2.putText(frame, f"CAM [{label}] {now_str}", (15, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
             cv2.putText(frame, f"Dev: {self.device_id[:10]}", (15, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
             cv2.putText(frame, f"Speed: {float(self.params.get('VehicleSpeedKph') or 0):.0f} km/h", (15, 125), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)

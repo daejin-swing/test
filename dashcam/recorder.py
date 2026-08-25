@@ -47,6 +47,7 @@ class DashcamRecorder:
         self.current_writer = None
         self.current_filename = None
         self.previous_filename = None
+        self.writer_resolution = None  # (width, height) currently opened by VideoWriter
         self.segment_start_time = 0.0
 
         self.width = DEFAULT_WIDTH
@@ -59,7 +60,7 @@ class DashcamRecorder:
         try:
             self.vipc_client = VisionIpcClient("camerad", VisionStreamType.VISION_STREAM_ROAD, True)
             if self.vipc_client.connect(False):
-                # Ensure width and height are valid integers
+                # Update resolution if already ready
                 if self.vipc_client.width and self.vipc_client.height:
                     self.width = int(self.vipc_client.width)
                     self.height = int(self.vipc_client.height)
@@ -71,32 +72,51 @@ class DashcamRecorder:
         return False
 
     def get_frame(self):
-        """Fetch frame from VisionIPC or generate a placeholder timestamp frame."""
+        """Fetch frame from VisionIPC, dynamically discovering actual camera resolution from incoming buffers."""
+        if self.vipc_client and self.vipc_client.is_connected() and np is not None:
+            buf = self.vipc_client.recv()
+            if buf is not None:
+                # 1. Dynamically read actual buffer dimensions from the frame itself
+                buf_w = getattr(buf, "width", None) or self.vipc_client.width
+                buf_h = getattr(buf, "height", None) or self.vipc_client.height
+                buf_stride = getattr(buf, "stride", None) or buf_w or self.width
+
+                if buf_w and buf_h:
+                    buf_w = int(buf_w)
+                    buf_h = int(buf_h)
+                    # If actual camera resolution was just discovered or changed, adapt immediately!
+                    if (buf_w != self.width or buf_h != self.height):
+                        cloudlog.info(f"Dashcam detected actual camera resolution: {self.width}x{self.height} -> {buf_w}x{buf_h}")
+                        self.width = buf_w
+                        self.height = buf_h
+                        # If VideoWriter was opened with initial default size, restart segment with actual size
+                        if self.current_writer and self.writer_resolution != (self.width, self.height):
+                            self.start_new_segment()
+
+                if cv2 is not None:
+                    try:
+                        stride = int(buf_stride)
+                        h = int(self.height)
+                        w = int(self.width)
+                        yuv = np.frombuffer(buf.data, dtype=np.uint8).reshape((h * 3 // 2, stride))
+                        bgr = cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR_NV12)
+                        if stride > w:
+                            bgr = bgr[:, :w]
+                        return bgr
+                    except Exception as e:
+                        cloudlog.debug(f"YUV convert error in recorder: {e}")
+
+        # Fallback dummy frame with timestamp for simulation/headless mode
         w = int(self.width if self.width else DEFAULT_WIDTH)
         h = int(self.height if self.height else DEFAULT_HEIGHT)
 
-        if self.vipc_client and self.vipc_client.is_connected() and np is not None:
-            # Update width/height dynamically if became available
-            if self.vipc_client.width and self.vipc_client.height:
-                self.width = int(self.vipc_client.width)
-                self.height = int(self.vipc_client.height)
-                w, h = self.width, self.height
-
-            buf = self.vipc_client.recv()
-            if buf is not None and cv2 is not None:
-                try:
-                    yuv = np.frombuffer(buf.data, dtype=np.uint8).reshape((h * 3 // 2, w))
-                    return cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR_NV12)
-                except Exception as e:
-                    cloudlog.debug(f"YUV convert error in recorder: {e}")
-
-        # Fallback dummy frame with timestamp for simulation/headless mode
         if np is not None:
             frame = np.zeros((h, w, 3), dtype=np.uint8)
             now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
             if cv2 is not None:
                 cv2.putText(frame, f"Dashcam Live [{now_str}]", (50, 80), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 2)
                 cv2.putText(frame, f"Device: {get_device_id()}", (50, 140), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
+                cv2.putText(frame, f"Res: {w}x{h}", (50, 200), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 200, 255), 2)
             return frame
         return None
 
@@ -111,11 +131,12 @@ class DashcamRecorder:
 
         w = int(self.width if self.width else DEFAULT_WIDTH)
         h = int(self.height if self.height else DEFAULT_HEIGHT)
+        self.writer_resolution = (w, h)
 
         if cv2 is not None:
             fourcc = cv2.VideoWriter_fourcc(*"mp4v")
             self.current_writer = cv2.VideoWriter(self.current_filename, fourcc, RECORDING_FPS, (w, h))
-            cloudlog.info(f"Started new dashcam segment: {self.current_filename}")
+            cloudlog.info(f"Started new dashcam segment: {self.current_filename} ({w}x{h})")
         else:
             cloudlog.warning("OpenCV (cv2) not available; video recording is running in mock mode")
 
@@ -139,7 +160,6 @@ class DashcamRecorder:
             dst_video = os.path.join(EVENTS_PENDING_DIR, f"{event_id}_{base_name}")
             try:
                 shutil.copy2(src_path, dst_video)
-                # Create metadata JSON alongside the video
                 metadata = {
                     "event_id": event_id,
                     "event_type": self.params.get("LastEventType") or "MANUAL_TRIGGER",
