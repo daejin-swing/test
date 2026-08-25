@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Connected Dashcam & Fleet Control Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.1); }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+
+  <!-- Navigation Bar -->
+  <nav class="glass sticky top-0 z-50 border-b border-slate-800 px-6 py-4 flex items-center justify-between">
+    <div class="flex items-center space-x-3">
+      <div class="bg-indigo-600 text-white p-2 rounded-lg shadow-lg shadow-indigo-500/30">
+        <i class="fa-solid fa-satellite-dish text-xl"></i>
+      </div>
+      <div>
+        <h1 class="text-xl font-bold tracking-tight text-white">Fleet Vision Control</h1>
+        <p class="text-xs text-slate-400">Connected Dashcam & OTA Remote Management</p>
+      </div>
+    </div>
+    <div class="flex items-center space-x-4">
+      <a href="/static/index.html" class="px-3 py-2 rounded-md text-sm font-medium bg-indigo-600/20 text-indigo-400 border border-indigo-500/30">
+        <i class="fa-solid fa-gauge mr-1"></i> 대시보드
+      </a>
+      <a href="/static/events.html" class="px-3 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800">
+        <i class="fa-solid fa-video mr-1"></i> 이벤트 영상
+      </a>
+      <a href="/static/logs.html" class="px-3 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800">
+        <i class="fa-solid fa-terminal mr-1"></i> 시스템 로그
+      </a>
+      <button onclick="fetchDevices()" class="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800" title="새로고침">
+        <i class="fa-solid fa-rotate"></i>
+      </button>
+    </div>
+  </nav>
+
+  <!-- Main Content -->
+  <main class="max-w-7xl mx-auto px-6 py-8">
+    
+    <!-- Top Stats -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+      <div class="glass p-5 rounded-2xl">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-wider text-slate-400">등록된 디바이스</p>
+            <h3 id="stat-total" class="text-2xl font-bold text-white mt-1">0</h3>
+          </div>
+          <div class="p-3 bg-blue-500/10 text-blue-400 rounded-xl"><i class="fa-solid fa-car text-xl"></i></div>
+        </div>
+      </div>
+      <div class="glass p-5 rounded-2xl">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-wider text-slate-400">온라인 상태</p>
+            <h3 id="stat-online" class="text-2xl font-bold text-emerald-400 mt-1">0</h3>
+          </div>
+          <div class="p-3 bg-emerald-500/10 text-emerald-400 rounded-xl"><i class="fa-solid fa-wifi text-xl"></i></div>
+        </div>
+      </div>
+      <div class="glass p-5 rounded-2xl">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-wider text-slate-400">실시간 스트리밍</p>
+            <h3 id="stat-streaming" class="text-2xl font-bold text-indigo-400 mt-1">0</h3>
+          </div>
+          <div class="p-3 bg-indigo-500/10 text-indigo-400 rounded-xl"><i class="fa-solid fa-tower-broadcast text-xl"></i></div>
+        </div>
+      </div>
+      <div class="glass p-5 rounded-2xl">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-wider text-slate-400">감지된 이벤트</p>
+            <h3 id="stat-events" class="text-2xl font-bold text-amber-400 mt-1">0</h3>
+          </div>
+          <div class="p-3 bg-amber-500/10 text-amber-400 rounded-xl"><i class="fa-solid fa-triangle-exclamation text-xl"></i></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Device List Grid -->
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-lg font-bold text-white flex items-center">
+        <i class="fa-solid fa-microchip mr-2 text-indigo-400"></i> 연결된 디바이스 목록
+      </h2>
+      <span class="text-xs text-slate-400">30초 자동 갱신</span>
+    </div>
+
+    <div id="device-grid" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <!-- Device Cards will be dynamically inserted here -->
+    </div>
+  </main>
+
+  <!-- Config Edit Modal -->
+  <div id="config-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="glass w-full max-w-lg rounded-2xl p-6 shadow-2xl border border-slate-700">
+      <div class="flex justify-between items-center pb-4 border-b border-slate-800">
+        <h3 class="text-lg font-bold text-white flex items-center">
+          <i class="fa-solid fa-sliders mr-2 text-indigo-400"></i> 원격 기기 설정 변경
+        </h3>
+        <button onclick="closeConfigModal()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-xl"></i></button>
+      </div>
+
+      <form id="config-form" onsubmit="saveDeviceConfig(event)" class="mt-4 space-y-4">
+        <input type="hidden" id="modal-device-id">
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-300 mb-1">타겟 Git 브랜치 (OTA Target Branch)</label>
+          <input type="text" id="cfg-target-branch" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+          <p class="text-xs text-slate-500 mt-1">기기가 다음 Heartbeat 시 이 브랜치로 자동 전환합니다.</p>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 mb-1">최소 여유 공간 (GB)</label>
+            <input type="number" step="0.5" id="cfg-min-free-gb" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 mb-1">이벤트 최대 보관수</label>
+            <input type="number" id="cfg-event-max-files" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 mb-1">썸네일 FPS (1단계)</label>
+            <input type="number" step="0.5" id="cfg-thumbnail-fps" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 mb-1">충격 감지 임계치 (G)</label>
+            <input type="number" step="0.1" id="cfg-g-sensor" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+          </div>
+        </div>
+
+        <div class="pt-4 flex justify-end space-x-3 border-t border-slate-800">
+          <button type="button" onclick="closeConfigModal()" class="px-4 py-2 text-sm font-medium text-slate-400 hover:text-white bg-slate-800 rounded-lg">취소</button>
+          <button type="submit" class="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg shadow-lg shadow-indigo-600/30">저장 및 배포</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    let activeWebSockets = {};
+
+    async function fetchDevices() {
+      try {
+        const res = await fetch('/api/v1/devices');
+        const devices = await res.json();
+        renderDevices(devices);
+        updateStats(devices);
+      } catch (err) {
+        console.error('Failed to fetch devices:', err);
+      }
+    }
+
+    async function updateStats(devices) {
+      document.getElementById('stat-total').innerText = devices.length;
+      const online = devices.filter(d => {
+        if (!d.last_heartbeat_at) return false;
+        const diff = (new Date() - new Date(d.last_heartbeat_at)) / 1000;
+        return diff < 90;
+      }).length;
+      document.getElementById('stat-online').innerText = online;
+      
+      const eventsRes = await fetch('/api/v1/events');
+      const events = await eventsRes.json();
+      document.getElementById('stat-events').innerText = events.length;
+    }
+
+    function renderDevices(devices) {
+      const grid = document.getElementById('device-grid');
+      if (devices.length === 0) {
+        grid.innerHTML = `
+          <div class="col-span-full glass p-12 text-center rounded-2xl">
+            <i class="fa-solid fa-robot text-4xl text-slate-600 mb-3"></i>
+            <p class="text-slate-400">아직 등록된 디바이스가 없습니다.</p>
+            <p class="text-xs text-slate-600 mt-1">클라이언트 기기(agentd)가 실행되면 자동으로 등록됩니다.</p>
+          </div>
+        `;
+        return;
+      }
+
+      grid.innerHTML = devices.map(d => {
+        const sys = d.system_status || {};
+        const cfg = d.config_json || {};
+        const isOnline = d.last_heartbeat_at && ((new Date() - new Date(d.last_heartbeat_at)) / 1000 < 90);
+
+        return `
+          <div class="glass rounded-2xl overflow-hidden border border-slate-800 shadow-xl flex flex-col">
+            <!-- Card Header -->
+            <div class="p-5 bg-slate-900/60 border-b border-slate-800/80 flex items-center justify-between">
+              <div class="flex items-center space-x-3">
+                <span class="relative flex h-3 w-3">
+                  ${isOnline ? `
+                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                  ` : `
+                    <span class="relative inline-flex rounded-full h-3 w-3 bg-slate-500"></span>
+                  `}
+                </span>
+                <div>
+                  <h3 class="font-bold text-white tracking-wide">${d.device_id}</h3>
+                  <p class="text-xs text-slate-400">IP: ${sys.ip_address || '127.0.0.1'} | Ver: ${d.current_version || '0.0.1'}</p>
+                </div>
+              </div>
+              <div class="flex items-center space-x-2">
+                <button onclick="openConfigModal('${d.device_id}')" class="px-3 py-1.5 text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg border border-slate-700">
+                  <i class="fa-solid fa-gear mr-1"></i> 설정
+                </button>
+              </div>
+            </div>
+
+            <!-- Card Body: Video View & Telemetry -->
+            <div class="p-5 grid grid-cols-1 md:grid-cols-2 gap-4 flex-1">
+              
+              <!-- 1-FPS Live Thumbnail Stream -->
+              <div class="relative bg-slate-950 rounded-xl overflow-hidden aspect-video border border-slate-800 flex items-center justify-center group">
+                <img id="thumb-${d.device_id}" class="w-full h-full object-cover hidden" alt="Live Stream">
+                <div id="thumb-placeholder-${d.device_id}" class="text-center p-4">
+                  <i class="fa-solid fa-video-slash text-2xl text-slate-600 mb-2"></i>
+                  <p class="text-xs text-slate-500">스트림 대기 중...</p>
+                </div>
+                
+                <div class="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/60 backdrop-blur-sm text-[10px] font-mono text-emerald-400 border border-emerald-500/30 flex items-center">
+                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></span> 1 FPS LIVE
+                </div>
+
+                <div class="absolute bottom-2 right-2">
+                  <button onclick="requestHighResLive('${d.device_id}')" class="px-2.5 py-1 text-xs bg-indigo-600 hover:bg-indigo-500 text-white rounded-md shadow-md opacity-90 group-hover:opacity-100 transition">
+                    <i class="fa-solid fa-expand mr-1"></i> 고화질 전환
+                  </button>
+                </div>
+              </div>
+
+              <!-- Software & Metrics Details -->
+              <div class="flex flex-col justify-between text-xs space-y-3">
+                <div class="space-y-2 bg-slate-900/40 p-3 rounded-xl border border-slate-800">
+                  <div class="flex justify-between">
+                    <span class="text-slate-400">현재 브랜치:</span>
+                    <span class="font-mono text-indigo-300 font-semibold">${d.current_branch || 'master'}</span>
+                  </div>
+                  <div class="flex justify-between">
+                    <span class="text-slate-400">타겟 브랜치:</span>
+                    <span class="font-mono text-amber-300 font-semibold">${d.target_branch || 'master'}</span>
+                  </div>
+                  <div class="flex justify-between">
+                    <span class="text-slate-400">최신 커밋:</span>
+                    <span class="font-mono text-slate-300">${(d.git_commit || '').substring(0, 7) || 'N/A'}</span>
+                  </div>
+                </div>
+
+                <!-- System Resources -->
+                <div class="space-y-2 bg-slate-900/40 p-3 rounded-xl border border-slate-800">
+                  <div>
+                    <div class="flex justify-between mb-1 text-[11px]">
+                      <span class="text-slate-400">디스크 여유 공간:</span>
+                      <span class="text-slate-200 font-medium">${sys.disk_free_gb || 0} GB / ${sys.disk_total_gb || 0} GB</span>
+                    </div>
+                    <div class="w-full bg-slate-800 rounded-full h-1.5">
+                      <div class="bg-indigo-500 h-1.5 rounded-full" style="width: ${((sys.disk_free_gb || 1)/(sys.disk_total_gb || 1))*100}%"></div>
+                    </div>
+                  </div>
+
+                  <div class="flex justify-between text-[11px]">
+                    <span class="text-slate-400">기기 온도:</span>
+                    <span class="text-amber-400 font-semibold">${sys.temperature_c || 0} °C</span>
+                  </div>
+                </div>
+
+                <!-- Realtime Telemetry HUD -->
+                <div class="grid grid-cols-3 gap-2 text-center">
+                  <div class="bg-slate-900/60 p-2 rounded-lg border border-slate-800">
+                    <p class="text-[10px] text-slate-400 uppercase">속도</p>
+                    <p id="tel-speed-${d.device_id}" class="text-sm font-bold text-white font-mono">0 <span class="text-[10px] font-normal text-slate-400">km/h</span></p>
+                  </div>
+                  <div class="bg-slate-900/60 p-2 rounded-lg border border-slate-800">
+                    <p class="text-[10px] text-slate-400 uppercase">조향각</p>
+                    <p id="tel-steer-${d.device_id}" class="text-sm font-bold text-white font-mono">0°</p>
+                  </div>
+                  <div class="bg-slate-900/60 p-2 rounded-lg border border-slate-800">
+                    <p class="text-[10px] text-slate-400 uppercase">브레이크</p>
+                    <p id="tel-brake-${d.device_id}" class="text-sm font-bold text-slate-400">OFF</p>
+                  </div>
+                </div>
+
+              </div>
+
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      // Connect WebSockets for thumbnails
+      devices.forEach(d => setupThumbnailWebSocket(d.device_id));
+    }
+
+    function setupThumbnailWebSocket(deviceId) {
+      if (activeWebSockets[deviceId]) return;
+
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${wsProtocol}//${window.location.host}/ws/v1/stream/view/${deviceId}`;
+      const ws = new WebSocket(wsUrl);
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'thumbnail' && data.image_base64) {
+            const imgEl = document.getElementById(`thumb-${deviceId}`);
+            const placeholder = document.getElementById(`thumb-placeholder-${deviceId}`);
+            if (imgEl) {
+              imgEl.src = `data:image/jpeg;base64,${data.image_base64}`;
+              imgEl.classList.remove('hidden');
+              if (placeholder) placeholder.classList.add('hidden');
+            }
+
+            // Update Telemetry
+            if (data.telemetry) {
+              const tel = data.telemetry;
+              const spd = document.getElementById(`tel-speed-${deviceId}`);
+              const str = document.getElementById(`tel-steer-${deviceId}`);
+              const brk = document.getElementById(`tel-brake-${deviceId}`);
+              if (spd) spd.innerHTML = `${Math.round(tel.speed_kph || 0)} <span class="text-[10px] font-normal text-slate-400">km/h</span>`;
+              if (str) str.innerText = `${(tel.steering_angle_deg || 0).toFixed(1)}°`;
+              if (brk) {
+                brk.innerText = tel.brake_pressed ? 'ON' : 'OFF';
+                brk.className = tel.brake_pressed ? 'text-sm font-bold text-rose-400' : 'text-sm font-bold text-slate-400';
+              }
+            }
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      };
+
+      ws.onclose = () => {
+        delete activeWebSockets[deviceId];
+        setTimeout(() => setupThumbnailWebSocket(deviceId), 5000);
+      };
+
+      activeWebSockets[deviceId] = ws;
+    }
+
+    // Modal Operations
+    async function openConfigModal(deviceId) {
+      const res = await fetch(`/api/v1/devices/${deviceId}`);
+      const device = await res.json();
+      const cfg = device.config_json || {};
+
+      document.getElementById('modal-device-id').value = deviceId;
+      document.getElementById('cfg-target-branch').value = device.target_branch || cfg.target_branch || 'master';
+      document.getElementById('cfg-min-free-gb').value = (cfg.storage && cfg.storage.min_free_bytes_gb) || 5.0;
+      document.getElementById('cfg-event-max-files').value = (cfg.storage && cfg.storage.event_max_files) || 100;
+      document.getElementById('cfg-thumbnail-fps').value = (cfg.stream && cfg.stream.thumbnail_fps) || 1.0;
+      document.getElementById('cfg-g-sensor').value = (cfg.event_trigger && cfg.event_trigger.g_sensor_threshold) || 1.5;
+
+      document.getElementById('config-modal').classList.remove('hidden');
+    }
+
+    function closeConfigModal() {
+      document.getElementById('config-modal').classList.add('hidden');
+    }
+
+    async function saveDeviceConfig(e) {
+      e.preventDefault();
+      const deviceId = document.getElementById('modal-device-id').value;
+      const targetBranch = document.getElementById('cfg-target-branch').value;
+      const minFreeGb = parseFloat(document.getElementById('cfg-min-free-gb').value);
+      const eventMaxFiles = parseInt(document.getElementById('cfg-event-max-files').value);
+      const thumbnailFps = parseFloat(document.getElementById('cfg-thumbnail-fps').value);
+      const gSensor = parseFloat(document.getElementById('cfg-g-sensor').value);
+
+      const payload = {
+        target_branch: targetBranch,
+        storage: {
+          min_free_bytes_gb: minFreeGb,
+          event_max_files: eventMaxFiles,
+        },
+        stream: {
+          thumbnail_fps: thumbnailFps,
+        },
+        event_trigger: {
+          g_sensor_threshold: gSensor,
+        }
+      };
+
+      try {
+        const res = await fetch(`/api/v1/devices/${deviceId}/config`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (res.ok) {
+          alert('원격 설정이 성공적으로 저장되었습니다. 다음 Heartbeat 시 기기에 적용됩니다.');
+          closeConfigModal();
+          fetchDevices();
+        }
+      } catch (err) {
+        alert('설정 저장 실패: ' + err);
+      }
+    }
+
+    function requestHighResLive(deviceId) {
+      alert(`[${deviceId}] 고화질 실시간 스트리밍 시그널링 요청을 전송했습니다.`);
+      // Send WebSocket start_live signaling message
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${wsProtocol}//${window.location.host}/ws/v1/webrtc/signaling/${deviceId}`;
+      const sigWs = new WebSocket(wsUrl);
+      sigWs.onopen = () => {
+        sigWs.send(JSON.stringify({ action: "start_live", device_id: deviceId }));
+        setTimeout(() => sigWs.close(), 1000);
+      };
+    }
+
+    // Initial Fetch & Periodic Auto-refresh
+    fetchDevices();
+    setInterval(fetchDevices, 30000);
+  </script>
+</body>
+</html>

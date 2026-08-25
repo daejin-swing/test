@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>이벤트 영상 목록 - Fleet Vision</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.1); }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+
+  <!-- Navigation Bar -->
+  <nav class="glass sticky top-0 z-50 border-b border-slate-800 px-6 py-4 flex items-center justify-between">
+    <div class="flex items-center space-x-3">
+      <div class="bg-indigo-600 text-white p-2 rounded-lg shadow-lg shadow-indigo-500/30">
+        <i class="fa-solid fa-video text-xl"></i>
+      </div>
+      <div>
+        <h1 class="text-xl font-bold tracking-tight text-white">Event Video Gallery</h1>
+        <p class="text-xs text-slate-400">Dashcam Shock & Event Recordings</p>
+      </div>
+    </div>
+    <div class="flex items-center space-x-4">
+      <a href="/static/index.html" class="px-3 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800">
+        <i class="fa-solid fa-gauge mr-1"></i> 대시보드
+      </a>
+      <a href="/static/events.html" class="px-3 py-2 rounded-md text-sm font-medium bg-indigo-600/20 text-indigo-400 border border-indigo-500/30">
+        <i class="fa-solid fa-video mr-1"></i> 이벤트 영상
+      </a>
+      <a href="/static/logs.html" class="px-3 py-2 rounded-md text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800">
+        <i class="fa-solid fa-terminal mr-1"></i> 시스템 로그
+      </a>
+    </div>
+  </nav>
+
+  <!-- Main Gallery -->
+  <main class="max-w-7xl mx-auto px-6 py-8">
+    <div class="flex items-center justify-between mb-6">
+      <h2 class="text-lg font-bold text-white flex items-center">
+        <i class="fa-solid fa-film mr-2 text-indigo-400"></i> 업로드된 이벤트 영상 목록
+      </h2>
+      <button onclick="fetchEvents()" class="px-3 py-1.5 text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg border border-slate-700">
+        <i class="fa-solid fa-rotate mr-1"></i> 새로고침
+      </button>
+    </div>
+
+    <div id="events-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <!-- Event cards will be dynamically loaded -->
+    </div>
+  </main>
+
+  <!-- Video Player Modal -->
+  <div id="video-modal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 hidden flex items-center justify-center p-4">
+    <div class="glass w-full max-w-3xl rounded-2xl p-6 border border-slate-700 shadow-2xl">
+      <div class="flex justify-between items-center pb-4 border-b border-slate-800 mb-4">
+        <h3 id="modal-title" class="text-base font-bold text-white">이벤트 영상 재생</h3>
+        <button onclick="closeVideoModal()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-xl"></i></button>
+      </div>
+
+      <div class="bg-black rounded-xl overflow-hidden aspect-video mb-4 flex items-center justify-center">
+        <video id="player" controls class="w-full h-full object-contain"></video>
+      </div>
+
+      <div id="modal-meta" class="text-xs text-slate-400 space-y-1"></div>
+    </div>
+  </div>
+
+  <script>
+    async function fetchEvents() {
+      try {
+        const res = await fetch('/api/v1/events');
+        const events = await res.json();
+        renderEvents(events);
+      } catch (err) {
+        console.error('Failed to fetch events:', err);
+      }
+    }
+
+    function renderEvents(events) {
+      const grid = document.getElementById('events-grid');
+      if (events.length === 0) {
+        grid.innerHTML = `
+          <div class="col-span-full glass p-12 text-center rounded-2xl">
+            <i class="fa-solid fa-clapperboard text-4xl text-slate-600 mb-3"></i>
+            <p class="text-slate-400">아직 업로드된 이벤트 영상이 없습니다.</p>
+          </div>
+        `;
+        return;
+      }
+
+      grid.innerHTML = events.map(e => `
+        <div class="glass rounded-2xl overflow-hidden border border-slate-800 flex flex-col justify-between shadow-lg hover:border-slate-700 transition">
+          <div class="p-4 bg-slate-900/50 border-b border-slate-800/80 flex items-center justify-between">
+            <span class="px-2 py-0.5 rounded text-[11px] font-bold uppercase bg-amber-500/10 text-amber-400 border border-amber-500/30">
+              ${e.event_type || 'EVENT'}
+            </span>
+            <span class="text-[11px] text-slate-400 font-mono">${(e.occurred_at || '').replace('T', ' ').substring(0, 19)}</span>
+          </div>
+
+          <div class="p-5 space-y-3">
+            <div class="flex items-center space-x-2 text-xs">
+              <span class="text-slate-400">기기 ID:</span>
+              <span class="font-bold text-indigo-400">${e.device_id}</span>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2 text-xs">
+              <div class="bg-slate-900/60 p-2 rounded-lg">
+                <p class="text-[10px] text-slate-400">G-충격 수치</p>
+                <p class="font-bold text-white">${e.g_force} G</p>
+              </div>
+              <div class="bg-slate-900/60 p-2 rounded-lg">
+                <p class="text-[10px] text-slate-400">차량 속도</p>
+                <p class="font-bold text-white">${e.speed_kph} km/h</p>
+              </div>
+            </div>
+
+            <div class="text-[11px] text-slate-500">
+              용량: ${(e.video_size_bytes / (1024 * 1024)).toFixed(1)} MB
+            </div>
+          </div>
+
+          <div class="p-4 bg-slate-900/40 border-t border-slate-800/80 flex justify-between">
+            <button onclick="playVideo('${e.video_url}', '${e.event_id}', '${e.device_id}', '${e.occurred_at}')" class="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow-md shadow-indigo-600/20 flex items-center justify-center">
+              <i class="fa-solid fa-play mr-1.5"></i> 영상 재생
+            </button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function playVideo(url, eventId, deviceId, time) {
+      const player = document.getElementById('player');
+      player.src = url;
+      document.getElementById('modal-title').innerText = `[${deviceId}] ${eventId}`;
+      document.getElementById('modal-meta').innerHTML = `
+        <p>발생 시각: ${time}</p>
+        <p>파일 경로: <a href="${url}" target="_blank" class="text-indigo-400 underline">${url}</a></p>
+      `;
+      document.getElementById('video-modal').classList.remove('hidden');
+      player.play();
+    }
+
+    function closeVideoModal() {
+      const player = document.getElementById('player');
+      player.pause();
+      player.src = '';
+      document.getElementById('video-modal').classList.add('hidden');
+    }
+
+    fetchEvents();
+  </script>
+</body>
+</html>
