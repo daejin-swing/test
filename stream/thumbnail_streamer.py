@@ -79,8 +79,9 @@ class DualThumbnailStreamer:
 
         # 1. Road Camera Client
         try:
-            self.vipc_road = VisionIpcClient("camerad", VisionStreamType.VISION_STREAM_ROAD, True)
-            if self.vipc_road.connect(False):
+            if self.vipc_road is None:
+                self.vipc_road = VisionIpcClient("camerad", VisionStreamType.VISION_STREAM_ROAD, True)
+            if not self.vipc_road.is_connected():
                 if self.vipc_road.width and self.vipc_road.height:
                     self.width_road = int(self.vipc_road.width)
                     self.height_road = int(self.vipc_road.height)
@@ -93,8 +94,9 @@ class DualThumbnailStreamer:
 
         # 2. Wide Road Camera Client
         try:
-            self.vipc_wide = VisionIpcClient("camerad", VisionStreamType.VISION_STREAM_WIDE_ROAD, True)
-            if self.vipc_wide.connect(False):
+            if self.vipc_wide is None:
+                self.vipc_wide = VisionIpcClient("camerad", VisionStreamType.VISION_STREAM_WIDE_ROAD, True)
+            if not self.vipc_wide.is_connected():
                 if self.vipc_wide.width and self.vipc_wide.height:
                     self.width_wide = int(self.vipc_wide.width)
                     self.height_wide = int(self.vipc_wide.height)
@@ -198,7 +200,7 @@ class DualThumbnailStreamer:
         while True:
             # Periodically re-check VIPC connections
             if time.monotonic() - last_vipc_retry > 5.0:
-                if not self.vipc_road or not self.vipc_wide:
+                if not (self.vipc_road and self.vipc_road.is_connected()) or not (self.vipc_wide and self.vipc_wide.is_connected()):
                     self.init_visionipc()
                 last_vipc_retry = time.monotonic()
 

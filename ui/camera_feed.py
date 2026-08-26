@@ -60,7 +60,6 @@ def detect_qr(frame: np.ndarray) -> QrDetection | None:
   # QRCodeDetector, which only recognizes the classic square finder pattern.
   import zxingcpp
 
-  cloudlog.debug("detect_qr called!!!!")
 
   barcodes = zxingcpp.read_barcodes(frame, formats=zxingcpp.BarcodeFormat.QRCode)
   if not barcodes:
