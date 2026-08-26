@@ -81,13 +81,15 @@ class DualThumbnailStreamer:
         try:
             if self.vipc_road is None:
                 self.vipc_road = VisionIpcClient("camerad", VisionStreamType.VISION_STREAM_ROAD, True)
-            if not self.vipc_road.is_connected():
-                if self.vipc_road.width and self.vipc_road.height:
-                    self.width_road = int(self.vipc_road.width)
-                    self.height_road = int(self.vipc_road.height)
-                cloudlog.info(f"Connected to Road Camera VIPC ({self.width_road}x{self.height_road})")
-            else:
-                self.vipc_road = None
+            if not self.vipc_road.is_connected():                
+                if self.vipc_road.connect(False):
+                    if self.vipc_road.width and self.vipc_road.height:
+                        self.width_road = int(self.vipc_road.width)
+                        self.height_road = int(self.vipc_road.height)
+                    cloudlog.info(f"Connected to Road Camera VIPC ({self.width_road}x{self.height_road})")
+                else:
+                    self.vipc_road = None
+                    cloudlog.debug("Failed to connect to Road Camera VIPC")
         except Exception as e:
             cloudlog.debug(f"Road VIPC connect error: {e}")
             self.vipc_road = None
@@ -97,12 +99,14 @@ class DualThumbnailStreamer:
             if self.vipc_wide is None:
                 self.vipc_wide = VisionIpcClient("camerad", VisionStreamType.VISION_STREAM_WIDE_ROAD, True)
             if not self.vipc_wide.is_connected():
-                if self.vipc_wide.width and self.vipc_wide.height:
-                    self.width_wide = int(self.vipc_wide.width)
-                    self.height_wide = int(self.vipc_wide.height)
-                cloudlog.info(f"Connected to Wide Road Camera VIPC ({self.width_wide}x{self.height_wide})")
-            else:
-                self.vipc_wide = None
+                if self.vipc_wide.connect(False):
+                    if self.vipc_wide.width and self.vipc_wide.height:
+                        self.width_wide = int(self.vipc_wide.width)
+                        self.height_wide = int(self.vipc_wide.height)
+                    cloudlog.info(f"Connected to Wide Road Camera VIPC ({self.width_wide}x{self.height_wide})")
+                else:
+                    cloudlog.debug("Failed to connect to Wide Road Camera VIPC")
+                    self.vipc_wide = None
         except Exception as e:
             cloudlog.debug(f"Wide VIPC connect error: {e}")
             self.vipc_wide = None
