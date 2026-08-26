@@ -123,9 +123,9 @@ class DualThumbnailStreamer:
         frame = None
 
         if vipc_client and vipc_client.is_connected() and np is not None:
-            buf = vipc_client.recv()
-            if buf is None:
-                cloudlog.debug("buf is NONE!!!!!")
+            buf = vipc_client.recv(timeout_ms=200)
+            #if buf is None:
+            #    cloudlog.debug("buf is NONE!!!!!")
             if buf is not None and cv2 is not None:
                 # Read actual buffer metadata directly
                 cloudlog.debug(f"width: {getattr(buf, "width", None)}, height: {getattr(buf, "height", None)}")
