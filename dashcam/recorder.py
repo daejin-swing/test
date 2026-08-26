@@ -98,7 +98,15 @@ class DashcamRecorder:
                         stride = int(buf_stride)
                         h = int(self.height)
                         w = int(self.width)
-                        yuv = np.frombuffer(buf.data, dtype=np.uint8).reshape((h * 3 // 2, stride))
+                        # Y and UV planes are separately row-aligned (32 / 16 rows) by the
+                        # ISP, so they aren't simply back-to-back at stride*h -- use the
+                        # buffer's own uv_offset to find the UV plane, same as
+                        # ui/camera_feed.py's extract_image().
+                        uv_offset = getattr(buf, "uv_offset", None) or (stride * h)
+                        uv_height = ((h // 2) + 15) // 16 * 16
+                        y = np.frombuffer(buf.data[:uv_offset], dtype=np.uint8).reshape(-1, stride)[:h]
+                        uv = np.frombuffer(buf.data[uv_offset:uv_offset + stride * uv_height], dtype=np.uint8).reshape(-1, stride)[:h // 2]
+                        yuv = np.vstack([y, uv])
                         bgr = cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR_NV12)
                         if stride > w:
                             bgr = bgr[:, :w]

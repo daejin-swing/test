@@ -138,7 +138,15 @@ class DualThumbnailStreamer:
                 stride = int(buf_stride)
 
                 try:
-                    yuv = np.frombuffer(buf.data, dtype=np.uint8).reshape((h * 3 // 2, stride))
+                    # Y and UV planes are separately row-aligned (32 / 16 rows) by the
+                    # ISP, so they aren't simply back-to-back at stride*h -- use the
+                    # buffer's own uv_offset to find the UV plane, same as
+                    # ui/camera_feed.py's extract_image().
+                    uv_offset = getattr(buf, "uv_offset", None) or (stride * h)
+                    uv_height = ((h // 2) + 15) // 16 * 16
+                    y = np.frombuffer(buf.data[:uv_offset], dtype=np.uint8).reshape(-1, stride)[:h]
+                    uv = np.frombuffer(buf.data[uv_offset:uv_offset + stride * uv_height], dtype=np.uint8).reshape(-1, stride)[:h // 2]
+                    yuv = np.vstack([y, uv])
                     bgr = cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR_NV12)
                     if stride > w:
                         bgr = bgr[:, :w]
@@ -147,11 +155,11 @@ class DualThumbnailStreamer:
                     cloudlog.debug(f"YUV convert error for {label}: {e}")
         else:
             cloudlog.debug(f"VIPC client connection: {vipc_client.is_connected() if vipc_client else 'N/A'}")
-        if frame is not None and cv2 is not None:
-            thumb = cv2.resize(frame, (320, 180), interpolation=cv2.INTER_AREA)
-            quality = int(self.params.get("ThumbnailQuality") or DEFAULT_THUMBNAIL_QUALITY)
-            _, enc_img = cv2.imencode(".jpg", thumb, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
-            return base64.b64encode(enc_img).decode("utf-8"), "image/jpeg"
+        # if frame is not None and cv2 is not None:
+        #     thumb = cv2.resize(frame, (320, 180), interpolation=cv2.INTER_AREA)
+        #     quality = int(self.params.get("ThumbnailQuality") or DEFAULT_THUMBNAIL_QUALITY)
+        #     _, enc_img = cv2.imencode(".jpg", thumb, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+        #     return base64.b64encode(enc_img).decode("utf-8"), "image/jpeg"
 
         # Mock frame with OpenCV
         # if frame is None and cv2 is not None and np is not None:

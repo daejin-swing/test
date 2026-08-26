@@ -20,6 +20,4 @@ cd "$DIR"
   sudo chmod 666 /tmp/visionipc_camerad 2>/dev/null
 ) &
 
-export DISABLE_ROAD=0
-export DISABLE_WIDE_ROAD=0
 exec sudo -E ./camerad
