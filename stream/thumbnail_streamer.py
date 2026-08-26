@@ -77,6 +77,7 @@ class DualThumbnailStreamer:
         if VisionIpcClient is None:
             return
 
+        cloudlog.debug("Initializing VisionIPC clients for dual cameras...")
         # 1. Road Camera Client
         try:
             if self.vipc_road is None:
@@ -90,6 +91,8 @@ class DualThumbnailStreamer:
                 else:
                     self.vipc_road = None
                     cloudlog.debug("Failed to connect to Road Camera VIPC")
+            else:
+                cloudlog.debug("Road Camera VIPC already connected")
         except Exception as e:
             cloudlog.debug(f"Road VIPC connect error: {e}")
             self.vipc_road = None
@@ -107,6 +110,8 @@ class DualThumbnailStreamer:
                 else:
                     cloudlog.debug("Failed to connect to Wide Road Camera VIPC")
                     self.vipc_wide = None
+            else:
+                cloudlog.debug("Wide Road Camera VIPC already connected")
         except Exception as e:
             cloudlog.debug(f"Wide VIPC connect error: {e}")
             self.vipc_wide = None
