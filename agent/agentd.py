@@ -192,6 +192,8 @@ class AgentDaemon:
         stream_cfg = config.get("stream", {})
         if "thumbnail_fps" in stream_cfg:
             self.params.put("ThumbnailFPS", float(stream_cfg["thumbnail_fps"]))
+        if "live_fps" in stream_cfg:
+            self.params.put("LiveFPS", float(stream_cfg["live_fps"]))
 
         self.params.put("AppliedConfigVersion", config_version)
 

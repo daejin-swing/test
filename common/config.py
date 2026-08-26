@@ -17,6 +17,10 @@ DEFAULT_EVENT_MAX_FILES = 100
 DEFAULT_THUMBNAIL_FPS = 1.0
 DEFAULT_THUMBNAIL_QUALITY = 40
 
+DEFAULT_LIVE_FPS = 10.0
+DEFAULT_LIVE_QUALITY = 80
+DEFAULT_LIVE_MAX_WIDTH = 1280
+
 # --- Directory Constants ---
 def get_default_media_root() -> str:
     if os.getenv("MEDIA_ROOT"):
@@ -31,6 +35,8 @@ CRASH_LOG_ROOT = os.path.join(LOG_ROOT, "crash")
 
 DASHCAM_ROOT = os.path.join(MEDIA_ROOT, "dashcam")
 NORMAL_DIR = os.path.join(DASHCAM_ROOT, "normal")
+NORMAL_ROAD_DIR = os.path.join(NORMAL_DIR, "road")
+NORMAL_WIDE_DIR = os.path.join(NORMAL_DIR, "wide")
 EVENTS_DIR = os.path.join(DASHCAM_ROOT, "events")
 EVENTS_PENDING_DIR = os.path.join(EVENTS_DIR, "pending")
 EVENTS_UPLOADED_DIR = os.path.join(EVENTS_DIR, "uploaded")
@@ -38,7 +44,7 @@ EVENTS_UPLOADED_DIR = os.path.join(EVENTS_DIR, "uploaded")
 
 def ensure_directories():
     """Ensure all required media and log directories exist."""
-    for d in [LOG_ROOT, CRASH_LOG_ROOT, NORMAL_DIR, EVENTS_PENDING_DIR, EVENTS_UPLOADED_DIR]:
+    for d in [LOG_ROOT, CRASH_LOG_ROOT, NORMAL_ROAD_DIR, NORMAL_WIDE_DIR, EVENTS_PENDING_DIR, EVENTS_UPLOADED_DIR]:
         os.makedirs(d, exist_ok=True)
 
 

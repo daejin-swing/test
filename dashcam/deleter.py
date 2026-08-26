@@ -7,7 +7,8 @@ from pathlib import Path
 
 from common.config import (
     MEDIA_ROOT,
-    NORMAL_DIR,
+    NORMAL_ROAD_DIR,
+    NORMAL_WIDE_DIR,
     EVENTS_UPLOADED_DIR,
     DEFAULT_MIN_FREE_DISK_GB,
     DEFAULT_EVENT_MAX_FILES,
@@ -48,20 +49,33 @@ class DashcamDeleter:
         self.params = Params()
         self.exit_event = threading.Event()
 
-    def delete_oldest_normal_file(self) -> bool:
-        files = list_files_by_mtime(NORMAL_DIR)
-        # Leave at least the current active segment (don't delete if only 1 file)
-        if len(files) <= 1:
+    def delete_oldest_normal_pair(self) -> bool:
+        """Deletes the oldest road/wide normal segment pair (matched by filename).
+        Road and wide segments roll over together under the same timestamp, so
+        they're deleted together to avoid leaving an orphaned half of a pair."""
+        road_files = list_files_by_mtime(NORMAL_ROAD_DIR)
+        wide_files = list_files_by_mtime(NORMAL_WIDE_DIR)
+
+        # Leave at least the current active segment per camera (don't delete the newest)
+        candidates = (road_files[:-1] if len(road_files) > 1 else []) + \
+                     (wide_files[:-1] if len(wide_files) > 1 else [])
+        if not candidates:
             return False
 
-        oldest = files[0]
-        try:
-            cloudlog.info(f"Deleter removing old normal video: {oldest}")
-            os.remove(oldest)
-            return True
-        except OSError as e:
-            cloudlog.error(f"Failed to delete {oldest}: {e}")
-            return False
+        oldest = min(candidates, key=lambda p: os.path.getmtime(p) if os.path.exists(p) else 0)
+        basename = os.path.basename(oldest)
+
+        deleted_any = False
+        for d in (NORMAL_ROAD_DIR, NORMAL_WIDE_DIR):
+            path = os.path.join(d, basename)
+            if os.path.exists(path):
+                try:
+                    cloudlog.info(f"Deleter removing old normal video: {path}")
+                    os.remove(path)
+                    deleted_any = True
+                except OSError as e:
+                    cloudlog.error(f"Failed to delete {path}: {e}")
+        return deleted_any
 
     def delete_oldest_uploaded_event(self) -> bool:
         files = list_files_by_mtime(EVENTS_UPLOADED_DIR)
@@ -101,7 +115,7 @@ class DashcamDeleter:
             cloudlog.warning(f"Disk space low ({free_gb:.2f}GB < {min_free_gb:.2f}GB), cleaning oldest files")
 
             # Priority 1: Delete normal rolling recordings
-            deleted = self.delete_oldest_normal_file()
+            deleted = self.delete_oldest_normal_pair()
 
             # Priority 2: Delete already uploaded event backups if still out of space
             if not deleted:

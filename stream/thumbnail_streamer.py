@@ -35,6 +35,9 @@ from common.config import (
     get_api_url,
     DEFAULT_THUMBNAIL_FPS,
     DEFAULT_THUMBNAIL_QUALITY,
+    DEFAULT_LIVE_FPS,
+    DEFAULT_LIVE_QUALITY,
+    DEFAULT_LIVE_MAX_WIDTH,
 )
 from common.log import cloudlog
 from common.params import Params
@@ -117,7 +120,7 @@ class DualThumbnailStreamer:
             cloudlog.debug(f"Wide VIPC connect error: {e}")
             self.vipc_wide = None
 
-    def encode_single_stream(self, vipc_client, label: str, default_w: int, default_h: int) -> tuple[str, str]:
+    def encode_single_stream(self, vipc_client, label: str, default_w: int, default_h: int, live: bool = False) -> tuple[str, str]:
         """Encodes one camera stream to base64 with dynamic buffer resolution handling."""
         w = default_w
         h = default_h
@@ -156,9 +159,18 @@ class DualThumbnailStreamer:
         else:
             cloudlog.debug(f"VIPC client connection: {vipc_client.is_connected() if vipc_client else 'N/A'}")
         if frame is not None and cv2 is not None:
-            thumb = cv2.resize(frame, (320, 180), interpolation=cv2.INTER_AREA)
-            quality = int(self.params.get("ThumbnailQuality") or DEFAULT_THUMBNAIL_QUALITY)
-            _, enc_img = cv2.imencode(".jpg", thumb, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+            if live:
+                # Send near-native resolution while the live modal is open, only
+                # downscaling if the source frame is wider than our cap.
+                fh, fw = frame.shape[:2]
+                if fw > DEFAULT_LIVE_MAX_WIDTH:
+                    scale = DEFAULT_LIVE_MAX_WIDTH / fw
+                    frame = cv2.resize(frame, (DEFAULT_LIVE_MAX_WIDTH, int(fh * scale)), interpolation=cv2.INTER_AREA)
+                quality = DEFAULT_LIVE_QUALITY
+            else:
+                frame = cv2.resize(frame, (320, 180), interpolation=cv2.INTER_AREA)
+                quality = int(self.params.get("ThumbnailQuality") or DEFAULT_THUMBNAIL_QUALITY)
+            _, enc_img = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
             return base64.b64encode(enc_img).decode("utf-8"), "image/jpeg"
 
         # Mock frame with OpenCV
@@ -186,8 +198,9 @@ class DualThumbnailStreamer:
         }
 
     def build_payload(self) -> dict:
-        road_b64, road_mime = self.encode_single_stream(self.vipc_road, "ROAD (Main)", self.width_road, self.height_road)
-        wide_b64, wide_mime = self.encode_single_stream(self.vipc_wide, "WIDE (Wide Road)", self.width_wide, self.height_wide)
+        live = self.params.get_bool("IsLiveStreaming")
+        road_b64, road_mime = self.encode_single_stream(self.vipc_road, "ROAD (Main)", self.width_road, self.height_road, live=live)
+        wide_b64, wide_mime = self.encode_single_stream(self.vipc_wide, "WIDE (Wide Road)", self.width_wide, self.height_wide, live=live)
 
         return {
             "type": "thumbnail",
@@ -198,6 +211,8 @@ class DualThumbnailStreamer:
             "image_road_base64": road_b64,    # Road Cam
             "image_wide_base64": wide_b64,    # Wide Cam
             "mime_type": road_mime,
+            "image_road_mime_type": road_mime,
+            "image_wide_mime_type": wide_mime,
         }
 
     async def push_via_http(self, payload: dict):
@@ -223,7 +238,10 @@ class DualThumbnailStreamer:
                     self.init_visionipc()
                 last_vipc_retry = time.monotonic()
 
-            fps = float(self.params.get("ThumbnailFPS") or DEFAULT_THUMBNAIL_FPS)
+            if self.params.get_bool("IsLiveStreaming"):
+                fps = float(self.params.get("LiveFPS") or DEFAULT_LIVE_FPS)
+            else:
+                fps = float(self.params.get("ThumbnailFPS") or DEFAULT_THUMBNAIL_FPS)
             interval = 1.0 / max(0.1, fps)
 
             if websockets is None:
