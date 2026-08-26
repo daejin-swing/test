@@ -90,9 +90,8 @@ class CameraFeed:
       sys.path.insert(0, BASEDIR)
     from msgq.visionipc import VisionIpcClient, VisionStreamType
 
-    #client = VisionIpcClient("camerad", VisionStreamType.VISION_STREAM_DRIVER, True)
+    client = VisionIpcClient("camerad", VisionStreamType.VISION_STREAM_DRIVER, True)
     
-    client = VisionIpcClient("camerad", VisionStreamType.VISION_STREAM_ROAD, True)
     deadline = time.monotonic() + timeout_s
     connected = False
     while time.monotonic() < deadline:

@@ -155,11 +155,11 @@ class DualThumbnailStreamer:
                     cloudlog.debug(f"YUV convert error for {label}: {e}")
         else:
             cloudlog.debug(f"VIPC client connection: {vipc_client.is_connected() if vipc_client else 'N/A'}")
-        # if frame is not None and cv2 is not None:
-        #     thumb = cv2.resize(frame, (320, 180), interpolation=cv2.INTER_AREA)
-        #     quality = int(self.params.get("ThumbnailQuality") or DEFAULT_THUMBNAIL_QUALITY)
-        #     _, enc_img = cv2.imencode(".jpg", thumb, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
-        #     return base64.b64encode(enc_img).decode("utf-8"), "image/jpeg"
+        if frame is not None and cv2 is not None:
+            thumb = cv2.resize(frame, (320, 180), interpolation=cv2.INTER_AREA)
+            quality = int(self.params.get("ThumbnailQuality") or DEFAULT_THUMBNAIL_QUALITY)
+            _, enc_img = cv2.imencode(".jpg", thumb, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+            return base64.b64encode(enc_img).decode("utf-8"), "image/jpeg"
 
         # Mock frame with OpenCV
         # if frame is None and cv2 is not None and np is not None:
