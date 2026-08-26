@@ -110,14 +110,14 @@ class DashcamRecorder:
         w = int(self.width if self.width else DEFAULT_WIDTH)
         h = int(self.height if self.height else DEFAULT_HEIGHT)
 
-        if np is not None:
-            frame = np.zeros((h, w, 3), dtype=np.uint8)
-            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-            if cv2 is not None:
-                cv2.putText(frame, f"Dashcam Live [{now_str}]", (50, 80), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 2)
-                cv2.putText(frame, f"Device: {get_device_id()}", (50, 140), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
-                cv2.putText(frame, f"Res: {w}x{h}", (50, 200), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 200, 255), 2)
-            return frame
+        # if np is not None:
+        #     frame = np.zeros((h, w, 3), dtype=np.uint8)
+        #     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        #     if cv2 is not None:
+        #         cv2.putText(frame, f"Dashcam Live [{now_str}]", (50, 80), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 2)
+        #         cv2.putText(frame, f"Device: {get_device_id()}", (50, 140), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
+        #         cv2.putText(frame, f"Res: {w}x{h}", (50, 200), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 200, 255), 2)
+        #     return frame
         return None
 
     def start_new_segment(self):

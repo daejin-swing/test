@@ -65,87 +65,88 @@ class DualThumbnailStreamer:
         self.device_id = get_device_id()
         self.params = Params()
 
+        # Dual VisionIPC clients: Road & Wide Road
+        self.vipc_road = None
+        self.vipc_wide = None
+
         self.width_road = 1280
         self.height_road = 720
         self.width_wide = 1280
         self.height_wide = 720
 
-        # Last successfully decoded frame per stream, kept fresh by background
-        # poll threads (see _poll_loop) instead of being re-fetched on every
-        # build_payload() call -- mirrors ui/camera_feed.py's CameraFeed so a
-        # single missed recv() doesn't blank out the thumbnail.
-        self.latest_frame_road = None
-        self.latest_frame_wide = None
-
-        self._running = False
-        self._threads: list[threading.Thread] = []
-
-    def start_polling(self):
-        if self._running or VisionIpcClient is None:
+    def init_visionipc(self):
+        if VisionIpcClient is None:
             return
-        self._running = True
-        for stream_type, label in (
-            (VisionStreamType.VISION_STREAM_ROAD, "road"),
-            (VisionStreamType.VISION_STREAM_WIDE_ROAD, "wide"),
-        ):
-            t = threading.Thread(target=self._poll_loop, args=(stream_type, label), daemon=True)
-            t.start()
-            self._threads.append(t)
 
-    def stop_polling(self):
-        self._running = False
-        for t in self._threads:
-            t.join(timeout=2)
-        self._threads = []
-
-    def _poll_loop(self, stream_type, label: str):
-        """Continuously polls one camera stream and caches the latest decoded
-        frame, same pattern as CameraFeed._poll_loop in ui/camera_feed.py."""
-        client = VisionIpcClient("camerad", stream_type, True)
-        while self._running:
-            if not client.is_connected():
-                if not client.connect(False):
-                    time.sleep(0.5)
-                    continue
-                cloudlog.info(f"Connected to {label} camera VIPC ({client.width}x{client.height})")
-
-            buf = client.recv(timeout_ms=200)
-            if buf is None:
-                continue
-
-            # Decoding is slower than the frame rate, so more than one frame can
-            # pile up between recv() calls -- drain to whatever is newest.
-            while True:
-                newer = client.recv(timeout_ms=0)
-                if newer is None:
-                    break
-                buf = newer
-
-            if cv2 is None or np is None:
-                continue
-
-            try:
-                buf_w = int(getattr(buf, "width", None) or client.width)
-                buf_h = int(getattr(buf, "height", None) or client.height)
-                stride = int(getattr(buf, "stride", None) or buf_w)
-
-                yuv = np.frombuffer(buf.data, dtype=np.uint8).reshape((buf_h * 3 // 2, stride))
-                bgr = cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR_NV12)
-                if stride > buf_w:
-                    bgr = bgr[:, :buf_w]
-            except Exception as e:
-                cloudlog.debug(f"YUV convert error for {label}: {e}")
-                continue
-
-            if label == "road":
-                self.latest_frame_road = bgr
-                self.width_road, self.height_road = buf_w, buf_h
+        cloudlog.debug("Initializing VisionIPC clients for dual cameras...")
+        # 1. Road Camera Client
+        try:
+            if self.vipc_road is None:
+                self.vipc_road = VisionIpcClient("camerad", VisionStreamType.VISION_STREAM_ROAD, True)
+            if not self.vipc_road.is_connected():                
+                if self.vipc_road.connect(False):
+                    if self.vipc_road.width and self.vipc_road.height:
+                        self.width_road = int(self.vipc_road.width)
+                        self.height_road = int(self.vipc_road.height)
+                    cloudlog.info(f"Connected to Road Camera VIPC ({self.width_road}x{self.height_road})")
+                else:
+                    self.vipc_road = None
+                    cloudlog.debug("Failed to connect to Road Camera VIPC")
             else:
-                self.latest_frame_wide = bgr
-                self.width_wide, self.height_wide = buf_w, buf_h
+                cloudlog.debug("Road Camera VIPC already connected")
+        except Exception as e:
+            cloudlog.debug(f"Road VIPC connect error: {e}")
+            self.vipc_road = None
 
-    def encode_single_stream(self, frame, label: str) -> tuple[str, str]:
-        """Encodes one camera stream's latest cached frame to base64."""
+        # 2. Wide Road Camera Client
+        try:
+            if self.vipc_wide is None:
+                self.vipc_wide = VisionIpcClient("camerad", VisionStreamType.VISION_STREAM_WIDE_ROAD, True)
+            if not self.vipc_wide.is_connected():
+                if self.vipc_wide.connect(False):
+                    if self.vipc_wide.width and self.vipc_wide.height:
+                        self.width_wide = int(self.vipc_wide.width)
+                        self.height_wide = int(self.vipc_wide.height)
+                    cloudlog.info(f"Connected to Wide Road Camera VIPC ({self.width_wide}x{self.height_wide})")
+                else:
+                    cloudlog.debug("Failed to connect to Wide Road Camera VIPC")
+                    self.vipc_wide = None
+            else:
+                cloudlog.debug("Wide Road Camera VIPC already connected")
+        except Exception as e:
+            cloudlog.debug(f"Wide VIPC connect error: {e}")
+            self.vipc_wide = None
+
+    def encode_single_stream(self, vipc_client, label: str, default_w: int, default_h: int) -> tuple[str, str]:
+        """Encodes one camera stream to base64 with dynamic buffer resolution handling."""
+        w = default_w
+        h = default_h
+        frame = None
+
+        if vipc_client and vipc_client.is_connected() and np is not None:
+            buf = vipc_client.recv(timeout_ms=200)
+            #if buf is None:
+            #    cloudlog.debug("buf is NONE!!!!!")
+            if buf is not None and cv2 is not None:
+                # Read actual buffer metadata directly
+                cloudlog.debug(f"width: {getattr(buf, "width", None)}, height: {getattr(buf, "height", None)}")
+                buf_w = getattr(buf, "width", None) or vipc_client.width or w
+                buf_h = getattr(buf, "height", None) or vipc_client.height or h
+                buf_stride = getattr(buf, "stride", None) or buf_w
+
+                w, h = int(buf_w), int(buf_h)
+                stride = int(buf_stride)
+
+                try:
+                    yuv = np.frombuffer(buf.data, dtype=np.uint8).reshape((h * 3 // 2, stride))
+                    bgr = cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR_NV12)
+                    if stride > w:
+                        bgr = bgr[:, :w]
+                    frame = bgr
+                except Exception as e:
+                    cloudlog.debug(f"YUV convert error for {label}: {e}")
+        else:
+            cloudlog.debug(f"VIPC client connection: {vipc_client.is_connected() if vipc_client else 'N/A'}")
         if frame is not None and cv2 is not None:
             thumb = cv2.resize(frame, (320, 180), interpolation=cv2.INTER_AREA)
             quality = int(self.params.get("ThumbnailQuality") or DEFAULT_THUMBNAIL_QUALITY)
@@ -177,8 +178,8 @@ class DualThumbnailStreamer:
         }
 
     def build_payload(self) -> dict:
-        road_b64, road_mime = self.encode_single_stream(self.latest_frame_road, "ROAD (Main)")
-        wide_b64, wide_mime = self.encode_single_stream(self.latest_frame_wide, "WIDE (Wide Road)")
+        road_b64, road_mime = self.encode_single_stream(self.vipc_road, "ROAD (Main)", self.width_road, self.height_road)
+        wide_b64, wide_mime = self.encode_single_stream(self.vipc_wide, "WIDE (Wide Road)", self.width_wide, self.height_wide)
 
         return {
             "type": "thumbnail",
@@ -200,12 +201,20 @@ class DualThumbnailStreamer:
 
     async def run(self):
         cloudlog.info("DualThumbnailStreamer started")
-        self.start_polling()
+        self.init_visionipc()
 
         ws_base = get_ws_url()
         uri = f"{ws_base}/stream/thumbnail/{self.device_id}"
 
+        last_vipc_retry = time.monotonic()
+
         while True:
+            # Periodically re-check VIPC connections
+            if time.monotonic() - last_vipc_retry > 5.0:
+                if not (self.vipc_road and self.vipc_road.is_connected()) or not (self.vipc_wide and self.vipc_wide.is_connected()):
+                    self.init_visionipc()
+                last_vipc_retry = time.monotonic()
+
             fps = float(self.params.get("ThumbnailFPS") or DEFAULT_THUMBNAIL_FPS)
             interval = 1.0 / max(0.1, fps)
 
