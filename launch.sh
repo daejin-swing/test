@@ -35,7 +35,7 @@ function launch {
 
   # 4. 백그라운드 서비스 실행 (크래시 시 자동 재시작 루프)
   # 카메라 데몬
-  ( while true; do [ -f "$DIR/camerad/run_camerad.sh" ] && ./camerad/run_camerad.sh; sleep 2; done ) &
+  #( while true; do [ -f "$DIR/camerad/run_camerad.sh" ] && ./camerad/run_camerad.sh; sleep 2; done ) &
 
   # 와이파이 UI
   ( while true; do [ -f "$DIR/ui/wifi_ui.py" ] && python3 ui/wifi_ui.py; sleep 2; done ) &
