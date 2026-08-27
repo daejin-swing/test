@@ -132,7 +132,6 @@ class DualThumbnailStreamer:
             #    cloudlog.debug("buf is NONE!!!!!")
             if buf is not None and cv2 is not None:
                 # Read actual buffer metadata directly
-                cloudlog.debug(f"width: {getattr(buf, "width", None)}, height: {getattr(buf, "height", None)}")
                 buf_w = getattr(buf, "width", None) or vipc_client.width or w
                 buf_h = getattr(buf, "height", None) or vipc_client.height or h
                 buf_stride = getattr(buf, "stride", None) or buf_w

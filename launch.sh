@@ -56,6 +56,9 @@ function launch {
   # GPS 위치 리포터
   ( while true; do python3 location/gpsd.py; sleep 3; done ) &
 
+  # IMU (가속도계/자이로) 리포터
+  ( while true; do python3 sensord/sensord.py; sleep 3; done ) &
+
   # 5. OTA 메인 프로세스 실행
   exec python3 updater/ota.py
 }

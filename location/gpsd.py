@@ -142,6 +142,7 @@ class GpsDaemon:
                 time.sleep(10)
 
         while True:
+            diag = None
             try:
                 setup_quectel_gps()
 
@@ -167,7 +168,16 @@ class GpsDaemon:
                     self.handle_position_report(log_payload)
             except Exception as e:
                 cloudlog.error(f"gpsd: error, reconnecting in 3s: {e}")
-                time.sleep(3.0)
+            finally:
+                # exclusive=True means a leaked fd here blocks our own next
+                # ModemDiag(DIAG_PORT) open with EAGAIN -- always release it
+                # before retrying, not just on the happy path.
+                if diag is not None:
+                    try:
+                        diag.close()
+                    except Exception:
+                        pass
+            time.sleep(3.0)
 
 
 def main():
