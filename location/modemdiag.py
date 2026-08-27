@@ -42,7 +42,11 @@ class ModemDiag:
     payload = payload[:-1]
     payload = payload.replace(bytes([self.ESCAPE_CHAR[0], self.TRAILER_CHAR[0] ^ 0x20]), self.TRAILER_CHAR)
     payload = payload.replace(bytes([self.ESCAPE_CHAR[0], self.ESCAPE_CHAR[0] ^ 0x20]), self.ESCAPE_CHAR)
-    assert payload[-2:] == pack('<H', ModemDiag.ccitt_crc16(payload[:-2])), "CRC16 mismatch"
+    expected_crc = pack('<H', ModemDiag.ccitt_crc16(payload[:-2]))
+    assert payload[-2:] == expected_crc, (
+        f"CRC16 mismatch: got {payload[-2:].hex()} expected {expected_crc.hex()}, "
+        f"frame ({len(payload)}B) = {payload.hex()}"
+    )
     return payload[:-2]
 
   def recv(self):
