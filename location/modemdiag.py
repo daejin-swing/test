@@ -19,7 +19,14 @@ class ModemDiag:
     self.pend = b''
 
   def open_serial(self, port: str):
-    serial = Serial(port, baudrate=115200, rtscts=True, dsrdtr=True, timeout=0, exclusive=True)
+    # Upstream (real comma hardware) opens this with rtscts=True, dsrdtr=True.
+    # This device's ttyUSB* ports don't seem to implement real RTS/CTS/DSR/DTR
+    # wiring (we hit the same class of problem on the AT port earlier -- writes
+    # blocked with EAGAIN until hardware flow control was disabled there too),
+    # and forcing it on here was silently dropping bytes mid-frame, producing
+    # huge, CRC-mismatched frames that look like several real frames stitched
+    # together across the gap.
+    serial = Serial(port, baudrate=115200, rtscts=False, dsrdtr=False, timeout=0, exclusive=True)
     serial.flush()
     serial.reset_input_buffer()
     serial.reset_output_buffer()
