@@ -53,6 +53,9 @@ function launch {
   ( while true; do python3 stream/thumbnail_streamer.py; sleep 3; done ) &
   ( while true; do python3 stream/live_streamer.py; sleep 3; done ) &
 
+  # GPS 위치 리포터
+  ( while true; do python3 location/gpsd.py; sleep 3; done ) &
+
   # 5. OTA 메인 프로세스 실행
   exec python3 updater/ota.py
 }

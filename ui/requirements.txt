@@ -6,3 +6,6 @@ zxing-cpp  # zxingcpp, used by ui/camera_feed.py's detect_qr() -- self-contained
            # codes (e.g. phone wifi-share codes) far better than cv2's
            # built-in QRCodeDetector did.
 websockets
+pyserial  # `serial.Serial`, used by location/gpsd.py to talk to the modem's
+          # AT port and DIAG port (/dev/ttyUSB2, /dev/ttyUSB0)
+crcmod    # CCITT CRC16 for DIAG protocol HDLC framing, used by location/gpsd.py
