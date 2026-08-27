@@ -151,23 +151,30 @@ class GpsDaemon:
                 cloudlog.info("gpsd: DIAG logging configured, listening for position reports")
 
                 while True:
-                    opcode, payload = diag.recv()
-                    if opcode != DIAG_LOG_F:
-                        continue
+                    try:
+                        opcode, payload = diag.recv()
+                        if opcode != DIAG_LOG_F:
+                            continue
 
-                    (pending_msgs, log_outer_length), inner = unpack_from("<BH", payload), payload[calcsize("<BH"):]
-                    if log_outer_length != len(inner):
-                        continue
+                        (pending_msgs, log_outer_length), inner = unpack_from("<BH", payload), payload[calcsize("<BH"):]
+                        if log_outer_length != len(inner):
+                            continue
 
-                    (log_inner_length, log_type, log_time), log_payload = (
-                        unpack_from("<HHQ", inner), inner[calcsize("<HHQ"):]
-                    )
-                    if log_inner_length != len(inner) or log_type != LOG_GNSS_POSITION_REPORT:
-                        continue
+                        (log_inner_length, log_type, log_time), log_payload = (
+                            unpack_from("<HHQ", inner), inner[calcsize("<HHQ"):]
+                        )
+                        if log_inner_length != len(inner) or log_type != LOG_GNSS_POSITION_REPORT:
+                            continue
 
-                    self.handle_position_report(log_payload)
+                        self.handle_position_report(log_payload)
+                    except AssertionError as e:
+                        # A single corrupt/desynced HDLC frame on the wire --
+                        # drop it and keep listening on the same DIAG session
+                        # instead of tearing the whole thing down and paying
+                        # for a full reconnect + re-setup over one bad frame.
+                        cloudlog.debug(f"gpsd: dropping malformed DIAG frame: {e}")
             except Exception as e:
-                cloudlog.error(f"gpsd: error, reconnecting in 3s: {e}")
+                cloudlog.error(f"gpsd: error ({type(e).__name__}), reconnecting in 3s: {e}")
             finally:
                 # exclusive=True means a leaked fd here blocks our own next
                 # ModemDiag(DIAG_PORT) open with EAGAIN -- always release it

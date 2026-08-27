@@ -36,12 +36,12 @@ class ModemDiag:
     return payload
 
   def hdlc_decapsulate(self, payload):
-    assert len(payload) >= 3
-    assert payload[-1:] == self.TRAILER_CHAR
+    assert len(payload) >= 3, f"frame too short: {len(payload)} bytes"
+    assert payload[-1:] == self.TRAILER_CHAR, "frame missing trailer byte"
     payload = payload[:-1]
     payload = payload.replace(bytes([self.ESCAPE_CHAR[0], self.TRAILER_CHAR[0] ^ 0x20]), self.TRAILER_CHAR)
     payload = payload.replace(bytes([self.ESCAPE_CHAR[0], self.ESCAPE_CHAR[0] ^ 0x20]), self.ESCAPE_CHAR)
-    assert payload[-2:] == pack('<H', ModemDiag.ccitt_crc16(payload[:-2]))
+    assert payload[-2:] == pack('<H', ModemDiag.ccitt_crc16(payload[:-2])), "CRC16 mismatch"
     return payload[:-2]
 
   def recv(self):
@@ -84,8 +84,8 @@ def setup_logs(diag, types_to_log):
 
   header_spec = '<3xII'
   operation, status = unpack_from(header_spec, payload)
-  assert operation == LOG_CONFIG_RETRIEVE_ID_RANGES_OP
-  assert status == LOG_CONFIG_SUCCESS_S
+  assert operation == LOG_CONFIG_RETRIEVE_ID_RANGES_OP, f"unexpected operation in ID-ranges response: {operation}"
+  assert status == LOG_CONFIG_SUCCESS_S, f"ID-ranges request failed: status {status}"
 
   log_masks = unpack_from('<16I', payload, calcsize(header_spec))
 
@@ -100,7 +100,7 @@ def setup_logs(diag, types_to_log):
           log_type,
           log_mask_bitsize
       ) + bytes(log_mask))
-      assert opcode == DIAG_LOG_CONFIG_F
+      assert opcode == DIAG_LOG_CONFIG_F, f"unexpected opcode setting mask for log_type {log_type}: {opcode}"
       operation, status = unpack_from(header_spec, payload)
-      assert operation == LOG_CONFIG_SET_MASK_OP
-      assert status == LOG_CONFIG_SUCCESS_S
+      assert operation == LOG_CONFIG_SET_MASK_OP, f"unexpected operation setting mask for log_type {log_type}: {operation}"
+      assert status == LOG_CONFIG_SUCCESS_S, f"set-mask failed for log_type {log_type}: status {status}"
