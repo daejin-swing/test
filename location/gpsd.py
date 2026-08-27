@@ -147,6 +147,7 @@ class GpsDaemon:
                 setup_quectel_gps()
 
                 diag = ModemDiag(DIAG_PORT)
+                diag.resync()
                 setup_logs(diag, [LOG_GNSS_POSITION_REPORT])
                 cloudlog.info("gpsd: DIAG logging configured, listening for position reports")
 

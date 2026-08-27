@@ -1,4 +1,5 @@
 import select
+import time
 from struct import pack, unpack_from, calcsize
 
 from serial import Serial
@@ -58,6 +59,22 @@ class ModemDiag:
 
   def send(self, packet_type, packet_payload):
     self.serial.write(self.hdlc_encapsulate(bytes([packet_type]) + packet_payload))
+
+  def resync(self, timeout: float = 1.0):
+    """Discard whatever partial frame is already in flight when we attach to
+    the port, so recv() starts parsing from a genuine frame boundary.
+    Otherwise the first bytes we see are likely the tail of a frame that
+    started before we opened the port, which reliably fails CRC."""
+    end = time.time() + timeout
+    buf = self.pend
+    self.pend = b''
+    while self.TRAILER_CHAR not in buf:
+      if time.time() > end:
+        return
+      r, _, _ = select.select([self.serial.fd], [], [], 0.2)
+      if r:
+        buf += self.serial.read(0x10000)
+    _, self.pend = buf.split(self.TRAILER_CHAR, 1)
 
   def close(self):
     self.serial.close()
