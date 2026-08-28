@@ -148,7 +148,17 @@ class GpsDaemon:
 
                 diag = ModemDiag(DIAG_PORT)
                 diag.resync()
-                setup_logs(diag, [LOG_GNSS_POSITION_REPORT])
+
+                for attempt in range(5):
+                    try:
+                        setup_logs(diag, [LOG_GNSS_POSITION_REPORT])
+                        break
+                    except AssertionError as e:
+                        cloudlog.debug(f"gpsd: setup_logs attempt {attempt + 1} failed, resyncing: {e}")
+                        diag.resync()
+                else:
+                    raise RuntimeError("gpsd: setup_logs failed after 5 attempts")
+
                 cloudlog.info("gpsd: DIAG logging configured, listening for position reports")
 
                 while True:

@@ -1,4 +1,5 @@
 import select
+import threading
 import time
 from struct import pack, unpack_from, calcsize
 
@@ -9,6 +10,17 @@ from crcmod import mkCrcFun
 # Qualcomm DIAG protocol over the modem's diag port to request/receive GNSS
 # position reports. See openpilot/system/qcomgpsd/ for the full version
 # (raw GPS/GLONASS measurement reports, OEMDRE) this project doesn't need.
+#
+# This device's DIAG port is far chattier than comma's stock modem -- a
+# continuous ~20KB/s flood of interleaved diag traffic, not just occasional
+# log messages. The original recv() interleaves the raw serial read with
+# frame decoding (unescaping + CRC) in one thread; under this much sustained
+# throughput, the time spent decoding one frame is enough for the kernel's
+# small tty receive buffer to overflow before we get back to reading, which
+# silently drops bytes and corrupts the next frame's boundary. To avoid that,
+# a dedicated thread does nothing but drain the OS buffer into memory as fast
+# as possible; recv()/resync() only ever pull already-buffered bytes, so
+# frame decoding time never blocks the read side.
 
 DIAG_PORT = "/dev/ttyUSB0"
 
@@ -18,19 +30,43 @@ class ModemDiag:
     self.serial = self.open_serial(port)
     self.pend = b''
 
+    self._buf = bytearray()
+    self._buf_lock = threading.Lock()
+    self._stop = threading.Event()
+    self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
+    self._reader_thread.start()
+
   def open_serial(self, port: str):
     # Upstream (real comma hardware) opens this with rtscts=True, dsrdtr=True.
     # This device's ttyUSB* ports don't seem to implement real RTS/CTS/DSR/DTR
     # wiring (we hit the same class of problem on the AT port earlier -- writes
-    # blocked with EAGAIN until hardware flow control was disabled there too),
-    # and forcing it on here was silently dropping bytes mid-frame, producing
-    # huge, CRC-mismatched frames that look like several real frames stitched
-    # together across the gap.
+    # blocked with EAGAIN until hardware flow control was disabled there too).
     serial = Serial(port, baudrate=115200, rtscts=False, dsrdtr=False, timeout=0, exclusive=True)
     serial.flush()
     serial.reset_input_buffer()
     serial.reset_output_buffer()
     return serial
+
+  def _reader_loop(self):
+    while not self._stop.is_set():
+      try:
+        r, _, _ = select.select([self.serial.fd], [], [], 0.5)
+        if not r:
+          continue
+        data = self.serial.read(0x10000)
+        if data:
+          with self._buf_lock:
+            self._buf.extend(data)
+      except OSError:
+        break
+
+  def _take_buffered(self) -> bytes:
+    with self._buf_lock:
+      if not self._buf:
+        return b''
+      data = bytes(self._buf)
+      self._buf.clear()
+      return data
 
   ccitt_crc16 = mkCrcFun(0x11021, initCrc=0, xorOut=0xffff)
   ESCAPE_CHAR = b'\x7d'
@@ -58,10 +94,13 @@ class ModemDiag:
 
   def recv(self):
     raw_payload = [self.pend]
+    self.pend = b''
     while self.TRAILER_CHAR not in raw_payload[-1]:
-      select.select([self.serial.fd], [], [])
-      raw = self.serial.read(0x10000)
-      raw_payload.append(raw)
+      chunk = self._take_buffered()
+      if chunk:
+        raw_payload.append(chunk)
+      else:
+        time.sleep(0.002)
     raw_payload = b''.join(raw_payload)
     raw_payload, self.pend = raw_payload.split(self.TRAILER_CHAR, 1)
     raw_payload += self.TRAILER_CHAR
@@ -82,12 +121,16 @@ class ModemDiag:
     while self.TRAILER_CHAR not in buf:
       if time.time() > end:
         return
-      r, _, _ = select.select([self.serial.fd], [], [], 0.2)
-      if r:
-        buf += self.serial.read(0x10000)
+      chunk = self._take_buffered()
+      if chunk:
+        buf += chunk
+      else:
+        time.sleep(0.01)
     _, self.pend = buf.split(self.TRAILER_CHAR, 1)
 
   def close(self):
+    self._stop.set()
+    self._reader_thread.join(timeout=1.0)
     self.serial.close()
 
 
